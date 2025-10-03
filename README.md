@@ -15,4 +15,4 @@ Aplicação React para planejar aportes mensais e metas patrimoniais. Pronta par
 2. Publique o conteúdo de `dist/` na branch `gh-pages`. Você pode usar GitHub Actions ou a CLI `gh-pages`.
 3. Garanta que o repositório esteja configurado para servir a branch `gh-pages` em `Settings > Pages`.
 
-O arquivo `vite.config.ts` já ajusta a base automaticamente usando a variável `GITHUB_REPOSITORY` do GitHub Actions. Para builds locais, defina `VITE_BASE_PATH="/Simulador-de-Investimentos/"` se publicar em um subcaminho diferente.
+O arquivo `vite.config.ts` já ajusta a base automaticamente usando a variável `GITHUB_REPOSITORY` do GitHub Actions e funciona localmente sem configurações extras. Só defina `VITE_BASE_PATH` se for publicar o build em um caminho incomum.
