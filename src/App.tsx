@@ -1,668 +1,1262 @@
-import React, { useEffect, useMemo, useState } from "react";
 import {
-  ResponsiveContainer,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip as ChartTooltip,
-  Legend,
-  AreaChart,
-  Area
-} from "recharts";
+  lazy,
+  Suspense,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-  PoliticaAporte,
-  aporteNecessario,
-  calcularProjecao,
   fmtBRL,
   fmtPct,
   mesesParaAnosMeses,
   parseInflacaoTabela,
-  taxaNecessaria
 } from "./lib/calculos";
-import { rodarTestes, TestRes } from "./lib/testCases";
+import {
+  DEFAULT_CONFIG,
+  Goal,
+  PlannerConfig,
+  parseBrazilianNumber,
+  projectPlan,
+  sanitizeConfig,
+} from "./lib/planner";
 
-const MIN_RATE = -0.999999;
-const MAX_RATE = 10;
-const MAX_MONEY = 1_000_000_000_000;
-const TIPOS_APORTE: readonly PoliticaAporte["tipo"][] = [
-  "constante",
-  "mensal_pct",
-  "anual_pct",
-  "anual_inflacao",
-  "anual_real"
-];
-
-function clampFinite(value: unknown, fallback: number, min: number, max: number) {
-  const numericValue = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numericValue)) return fallback;
-  return Math.min(max, Math.max(min, numericValue));
-}
-
-function safeMoney(value: unknown, fallback: number) {
-  return clampFinite(value, fallback, 0, MAX_MONEY);
-}
-
-function safeRate(value: unknown, fallback: number) {
-  return clampFinite(value, fallback, MIN_RATE, MAX_RATE);
-}
-
-function safeWholeNumber(value: unknown, fallback: number, min: number, max: number) {
-  return Math.round(clampFinite(value, fallback, min, max));
-}
-
-function safeBoolean(value: unknown, fallback: boolean) {
-  return typeof value === "boolean" ? value : fallback;
-}
-
-function isTipoAporte(value: unknown): value is PoliticaAporte["tipo"] {
-  return typeof value === "string" && TIPOS_APORTE.includes(value as PoliticaAporte["tipo"]);
-}
-
-function Row({ children, style = {} as React.CSSProperties, className }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
-  return (
-    <div className={className} style={{ display: "flex", gap: 12, alignItems: "center", ...style }}>{children}</div>
-  );
-}
-
-type NumberFieldProps = {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  step?: number;
-  prefix?: string;
-  suffix?: string;
-  min?: number;
-  max?: number;
+const STORAGE_KEY = "simulador_plano_v3";
+const money = (value: number) => fmtBRL(value);
+const ProjectionChart = lazy(() => import("./ProjectionChart"));
+const duration = (months: number) =>
+  months === 0
+    ? "agora"
+    : mesesParaAnosMeses(months).replace(/ e 0 meses$/, "");
+const goals: { id: Goal; title: string; description: string; icon: string }[] =
+  [
+    {
+      id: "grow",
+      title: "Quanto posso juntar?",
+      description:
+        "Veja o que seus depósitos podem se tornar ao longo do tempo.",
+      icon: "↗",
+    },
+    {
+      id: "monthly",
+      title: "Quanto preciso guardar por mês?",
+      description:
+        "Parta de uma meta e descubra um valor mensal para chegar lá.",
+      icon: "◎",
+    },
+    {
+      id: "time",
+      title: "Quando consigo chegar à minha meta?",
+      description: "Descubra o prazo a partir do que você consegue guardar.",
+      icon: "◷",
+    },
+  ];
+const policyNames = {
+  constante: "Mesmo valor todo mês",
+  mensal_pct: "Aumento mensal",
+  anual_pct: "Aumento anual",
+  anual_inflacao: "Aumento anual pela inflação",
+  anual_real: "Inflação + aumento extra anual",
 };
 
-function NumberField({ label, value, onChange, step = 1, prefix, suffix, min, max }: NumberFieldProps) {
-  const inputId = `number-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-  const lowerBound = min ?? Number.NEGATIVE_INFINITY;
-  const upperBound = max ?? Number.POSITIVE_INFINITY;
+function readSaved(): { config: PlannerConfig; notice: string } {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const config = sanitizeConfig(JSON.parse(saved));
+      return {
+        config: config.compare ? { ...config, rate: 0.06 } : config,
+        notice:
+          "Seu plano salvo neste dispositivo foi recuperado. Você pode revisar os valores.",
+      };
+    }
+    const legacy = localStorage.getItem("simulador_meta_config_v2");
+    if (legacy) {
+      const old = JSON.parse(legacy);
+      if (!old || typeof old !== "object")
+        return {
+          config: DEFAULT_CONFIG,
+          notice: "O plano antigo não pôde ser recuperado.",
+        };
+      return {
+        config: sanitizeConfig({
+          goal: "time",
+          initial: old.montanteInicial,
+          monthly: old.aporteMensal,
+          target: old.meta,
+          years: old.anosLimite,
+          rate: old.rentabAnual,
+          compare: false,
+          inflationAdjusted: old.usarTaxaReal,
+          inflation: old.inflacaoAnual,
+          beginning: old.contribuicaoNoInicio,
+          policy:
+            old.tipoAporte === "mensal_pct"
+              ? { tipo: "mensal_pct", mensalPct: old.mensalPct }
+              : old.tipoAporte === "anual_pct"
+                ? { tipo: "anual_pct", anualPct: old.anualPct }
+                : old.tipoAporte === "anual_real"
+                  ? { tipo: "anual_real", realExtra: old.realExtra }
+                  : { tipo: old.tipoAporte ?? "constante" },
+          inflationTable: old.usaTabelaInflacao
+            ? parseInflacaoTabela(old.inflacaoTabelaStr)
+            : undefined,
+        }),
+        notice:
+          "Recuperamos seus valores antigos. Revise as hipóteses: a visão em dinheiro de hoje agora considera também a inflação sobre cada depósito.",
+      };
+    }
+  } catch {
+    return {
+      config: DEFAULT_CONFIG,
+      notice:
+        "Não foi possível ler o plano salvo. Você pode simular normalmente.",
+    };
+  }
+  return { config: DEFAULT_CONFIG, notice: "" };
+}
 
+type FieldProps = {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  onError: (id: string, error: boolean) => void;
+  unit?: string;
+  hint?: string;
+  min?: number;
+  max?: number;
+  integer?: boolean;
+};
+function Field({
+  label,
+  value,
+  onChange,
+  onError,
+  unit = "R$",
+  hint,
+  min = 0,
+  max = 1e12,
+  integer = false,
+}: FieldProps) {
+  const id = useId();
+  const format = (n: number) =>
+    new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(n);
+  const [draft, setDraft] = useState(format(value));
+  const [error, setError] = useState("");
+  const lastValue = useRef(value);
+  useEffect(() => {
+    if (lastValue.current !== value) {
+      lastValue.current = value;
+      setDraft(format(value));
+      setError("");
+      onError(id, false);
+    }
+  }, [value]);
+  useEffect(() => () => onError(id, false), []);
+  const change = (text: string) => {
+    setDraft(text);
+    const n = unit.startsWith("%")
+      ? parseBrazilianNumber(text.trim().replace(/%$/, ""))
+      : text.includes("%")
+        ? null
+        : parseBrazilianNumber(text);
+    const message =
+      n === null
+        ? "Digite um número, como 1.000,50."
+        : n < min || n > max
+          ? `Use um valor entre ${format(min)} e ${format(max)}.`
+          : integer && !Number.isInteger(n)
+            ? "Use um número inteiro de anos."
+            : "";
+    setError(message);
+    onError(id, !!message);
+    if (!message && n !== null) {
+      lastValue.current = n;
+      onChange(n);
+    }
+  };
   return (
-    <div className="number-field">
-      <label htmlFor={inputId} style={{ fontSize: 13, color: "#475569" }}>{label}</label>
-      <Row className="number-field-control">
-        {prefix && <span className="number-field-prefix" style={{ color: "#64748b" }}>{prefix}</span>}
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      <div className={`input-wrap ${error ? "invalid" : ""}`}>
+        {unit === "R$" && <span aria-hidden="true">R$</span>}
         <input
-          id={inputId}
-          className="number-input"
-          type="number"
-          step={step}
-          min={min}
-          max={max}
-          inputMode="decimal"
-          value={Number.isFinite(value) ? value : 0}
-          onChange={(e) => {
-            const next = Number(e.target.value);
-            if (!Number.isFinite(next)) return;
-            onChange(Math.min(upperBound, Math.max(lowerBound, next)));
+          id={id}
+          inputMode={integer ? "numeric" : "decimal"}
+          type="text"
+          value={draft}
+          aria-invalid={!!error}
+          aria-describedby={`${id}-help`}
+          onChange={(e) => change(e.target.value)}
+          onBlur={() => {
+            if (!error) setDraft(format(value));
           }}
-          style={{ padding: 8, borderRadius: 8, border: "1px solid #e2e8f0" }}
         />
-        {suffix && <span className="number-field-suffix" style={{ color: "#64748b" }}>{suffix}</span>}
-      </Row>
+        {unit !== "R$" && <span>{unit}</span>}
+      </div>
+      <small id={`${id}-help`} className={error ? "error" : ""}>
+        {error || hint}
+      </small>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="section-card">
-      <div style={{ fontWeight: 600, marginBottom: 8 }}>{title}</div>
-      {children}
-    </section>
-  );
-}
-
 export default function App() {
-  const [montanteInicial, setMontanteInicial] = useState(10000);
-  const [aporteMensal, setAporteMensal] = useState(1000);
-  const [rentabAnual, setRentabAnual] = useState(0.12);
-  const [meta, setMeta] = useState(1_000_000);
-  const [anosLimite, setAnosLimite] = useState(50);
-  const [contribuicaoNoInicio, setContribuicaoNoInicio] = useState(true);
-  const [usarTaxaReal, setUsarTaxaReal] = useState(false);
-  const [inflacaoAnual, setInflacaoAnual] = useState(0.04);
-  const [prazoDesejado, setPrazoDesejado] = useState(15);
-
-  const [usaTabelaInflacao, setUsaTabelaInflacao] = useState(false);
-  const [inflacaoTabelaStr, setInflacaoTabelaStr] = useState("");
-  const inflacaoTabela = useMemo(
-    () => parseInflacaoTabela(inflacaoTabelaStr).filter((value) => value > MIN_RATE && value <= MAX_RATE),
-    [inflacaoTabelaStr]
+  const [loaded] = useState(readSaved);
+  const [config, setConfig] = useState<PlannerConfig>(loaded.config);
+  const [step, setStep] = useState(0);
+  const [initialReset, setInitialReset] = useState(0);
+  const [notice, setNotice] = useState(loaded.notice);
+  const [submitted, setSubmitted] = useState<PlannerConfig | null>(null);
+  const [experiment, setExperiment] = useState<
+    "more" | "longer" | "lower" | null
+  >(null);
+  const [tableText, setTableText] = useState(
+    config.inflationTable?.map((n) => `${n * 100}%`).join("; ") ?? "",
   );
-
-  const [tipoAporte, setTipoAporte] = useState<PoliticaAporte["tipo"]>("constante");
-  const [mensalPct, setMensalPct] = useState(0.0);
-  const [anualPct, setAnualPct] = useState(0.1);
-  const [realExtra, setRealExtra] = useState(0.02);
-
-  const politicaAporte: PoliticaAporte =
-    tipoAporte === "mensal_pct"
-      ? { tipo: "mensal_pct", mensalPct }
-      : tipoAporte === "anual_pct"
-      ? { tipo: "anual_pct", anualPct }
-      : tipoAporte === "anual_inflacao"
-      ? { tipo: "anual_inflacao" }
-      : tipoAporte === "anual_real"
-      ? { tipo: "anual_real", realExtra }
-      : { tipo: "constante" };
-
+  const [useTable, setUseTable] = useState(!!config.inflationTable?.length);
+  const errors = useRef(new Set<string>());
+  const heading = useRef<HTMLHeadingElement>(null);
+  const previousStep = useRef(step);
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const salvo = window.localStorage.getItem("simulador_meta_config_v2");
-    if (salvo) {
-      try {
-        const cfg = JSON.parse(salvo);
-        setMontanteInicial(safeMoney(cfg.montanteInicial, 10000));
-        setAporteMensal(safeMoney(cfg.aporteMensal, 1000));
-        setRentabAnual(safeRate(cfg.rentabAnual, 0.12));
-        setMeta(safeMoney(cfg.meta, 1_000_000));
-        setAnosLimite(safeWholeNumber(cfg.anosLimite, 50, 1, 80));
-        setContribuicaoNoInicio(safeBoolean(cfg.contribuicaoNoInicio, true));
-        setUsarTaxaReal(safeBoolean(cfg.usarTaxaReal, false));
-        setInflacaoAnual(safeRate(cfg.inflacaoAnual, 0.04));
-        setPrazoDesejado(safeWholeNumber(cfg.prazoDesejado, 15, 1, 60));
-        if (isTipoAporte(cfg.tipoAporte)) setTipoAporte(cfg.tipoAporte);
-        if (cfg.mensalPct !== undefined) setMensalPct(safeRate(cfg.mensalPct, 0));
-        if (cfg.anualPct !== undefined) setAnualPct(safeRate(cfg.anualPct, 0.1));
-        if (cfg.realExtra !== undefined) setRealExtra(safeRate(cfg.realExtra, 0.02));
-        setUsaTabelaInflacao(safeBoolean(cfg.usaTabelaInflacao, false));
-        if (typeof cfg.inflacaoTabelaStr === "string") setInflacaoTabelaStr(cfg.inflacaoTabelaStr);
-      } catch (error) {
-        console.error("Falha ao carregar configuração salva", error);
-      }
+    if (previousStep.current !== step) {
+      heading.current?.focus();
+      previousStep.current = step;
     }
-  }, []);
-
-  const salvarConfig = () => {
-    if (typeof window === "undefined") return;
-    const cfg = {
-      montanteInicial,
-      aporteMensal,
-      rentabAnual,
-      meta,
-      anosLimite,
-      contribuicaoNoInicio,
-      usarTaxaReal,
-      inflacaoAnual,
-      prazoDesejado,
-      tipoAporte,
-      mensalPct,
-      anualPct,
-      realExtra,
-      usaTabelaInflacao,
-      inflacaoTabelaStr
-    };
-    window.localStorage.setItem("simulador_meta_config_v2", JSON.stringify(cfg));
+  }, [step]);
+  const onError = (id: string, invalid: boolean) => {
+    if (invalid) errors.current.add(id);
+    else errors.current.delete(id);
   };
-
-  const limparConfig = () => {
-    if (typeof window === "undefined") return;
-    window.localStorage.removeItem("simulador_meta_config_v2");
+  const update = <K extends keyof PlannerConfig>(
+    key: K,
+    value: PlannerConfig[K],
+  ) => setConfig((c) => ({ ...c, [key]: value }));
+  const tableValues = tableText
+    .split(/[;\n]+/)
+    .filter((s) => s.trim())
+    .map((s) => parseBrazilianNumber(s.trim().replace(/%$/, "")));
+  const tableError =
+    useTable &&
+    (!tableValues.length ||
+      tableValues.length > 80 ||
+      tableValues.some((n) => n === null || n <= -100 || n > 1000));
+  const next = () => {
+    if (errors.current.size || (step === 2 && tableError)) {
+      const invalid = document.querySelector<HTMLElement>(
+        '[aria-invalid="true"]',
+      );
+      const details = invalid?.closest("details");
+      if (details) details.open = true;
+      invalid?.focus();
+      return;
+    }
+    if (step === 2) {
+      const ready = {
+        ...config,
+        inflationTable: useTable ? tableValues.map((n) => n! / 100) : undefined,
+      };
+      setConfig(ready);
+      setSubmitted(ready);
+      setExperiment(null);
+      setStep(3);
+    } else setStep(step + 1);
   };
-
-  const inflTabelaOpt = usaTabelaInflacao ? inflacaoTabela : undefined;
-
-  const { dados, mesAlvo, taxaMensalNominalConst, taxaMensalInflacaoMedia } = useMemo(
-    () =>
-      calcularProjecao({
-        montanteInicial,
-        aporteMensal,
-        rentabAnual,
-        meta,
-        anosLimite,
-        contribuicaoNoInicio,
-        usarTaxaReal,
-        inflacaoAnual,
-        inflacaoTabela: inflTabelaOpt,
-        politicaAporte
-      }),
-    [
-      montanteInicial,
-      aporteMensal,
-      rentabAnual,
-      meta,
-      anosLimite,
-      contribuicaoNoInicio,
-      usarTaxaReal,
-      inflacaoAnual,
-      inflTabelaOpt,
-      politicaAporte
-    ]
+  const active = useMemo(() => {
+    if (!submitted) return null;
+    if (experiment === "more")
+      return { ...submitted, monthly: Math.min(1e12, submitted.monthly + 100) };
+    if (experiment === "longer")
+      return { ...submitted, years: Math.min(80, submitted.years + 2) };
+    if (experiment === "lower")
+      return {
+        ...submitted,
+        rate: Math.max(-0.99, submitted.rate - 0.02),
+        compare: false,
+      };
+    return submitted;
+  }, [submitted, experiment]);
+  const baseline = useMemo(
+    () => (submitted ? projectPlan(submitted) : null),
+    [submitted],
   );
-
-  const aporteParaPrazo = useMemo(
+  const result = useMemo(() => (active ? projectPlan(active) : null), [active]);
+  const scenarios = useMemo(
     () =>
-      aporteNecessario({
-        montanteInicial,
-        rentabAnual,
-        anos: prazoDesejado,
-        meta,
-        contribuicaoNoInicio,
-        usarTaxaReal,
-        inflacaoAnual,
-        inflacaoTabela: inflTabelaOpt,
-        politicaAporte
-      }),
-    [
-      montanteInicial,
-      rentabAnual,
-      prazoDesejado,
-      meta,
-      contribuicaoNoInicio,
-      usarTaxaReal,
-      inflacaoAnual,
-      inflTabelaOpt,
-      politicaAporte
-    ]
+      submitted?.compare
+        ? [0.04, 0.06, 0.08].map((rate) => ({
+            rate,
+            result: projectPlan({ ...submitted, rate }),
+          }))
+        : [],
+    [submitted],
   );
-
-  const taxaParaPrazo = useMemo(
-    () =>
-      taxaNecessaria({
-        montanteInicial,
-        aporteMensal,
-        anos: prazoDesejado,
-        meta,
-        contribuicaoNoInicio,
-        usarTaxaReal,
-        inflacaoAnual,
-        inflacaoTabela: inflTabelaOpt,
-        politicaAporte
-      }),
-    [
-      montanteInicial,
-      aporteMensal,
-      prazoDesejado,
-      meta,
-      contribuicaoNoInicio,
-      usarTaxaReal,
-      inflacaoAnual,
-      inflTabelaOpt,
-      politicaAporte
-    ]
+  const field = (
+    key: "initial" | "monthly" | "target" | "years" | "rate" | "inflation",
+    label: string,
+    extra: Partial<FieldProps> = {},
+  ) => (
+    <Field
+      key={key === "initial" ? `initial-${initialReset}` : key}
+      label={label}
+      value={config[key]}
+      onChange={(v) => update(key, v)}
+      onError={onError}
+      {...extra}
+    />
   );
-
-  const sensibilidades = useMemo(() => {
-    const variacoesRent = [-0.02, -0.01, 0, 0.01, 0.02];
-    const variacoesAporte = [-0.2, -0.1, 0, 0.1, 0.2];
-    return variacoesAporte.map((va) =>
-      variacoesRent.map((vr) => {
-        const r = Math.max(-0.99, rentabAnual + vr);
-        const a = Math.max(0, aporteMensal * (1 + va));
-        const { mesAlvo: ma } = calcularProjecao({
-          montanteInicial,
-          aporteMensal: a,
-          rentabAnual: r,
-          meta,
-          anosLimite,
-          contribuicaoNoInicio,
-          usarTaxaReal,
-          inflacaoAnual,
-          inflacaoTabela: inflTabelaOpt,
-          politicaAporte
-        });
-        return { va, vr, meses: ma };
-      })
-    );
-  }, [
-    montanteInicial,
-    aporteMensal,
-    rentabAnual,
-    meta,
-    anosLimite,
-    contribuicaoNoInicio,
-    usarTaxaReal,
-    inflacaoAnual,
-    inflTabelaOpt,
-    politicaAporte
-  ]);
-
-  const exportarCSV = () => {
-    if (typeof window === "undefined") return;
-    const linhas = [
-      ["mes", "aporte_mes", "saldo", "contribuicoes_acumuladas", "ganhos_acumulados"],
-      ...dados.map((d) => [d.mes, d.aporte, d.saldo, d.contribuicoesAcum, d.ganhosAcum])
-    ];
-    const conteudo = linhas.map((l) => l.join(",")).join("\n");
-    const blob = new Blob([conteudo], { type: "text/csv;charset=utf-8;" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "projecao_meta_patrimonial.csv";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
+  const save = () => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(submitted ?? config));
+      setNotice(
+        "Plano salvo neste dispositivo. Ele estará aqui na sua próxima visita neste navegador.",
+      );
+    } catch {
+      setNotice(
+        "O navegador não permitiu salvar. Seu plano continua disponível nesta página.",
+      );
+    }
   };
-
-  const naoAtingida = "> limite";
-  const mesesAteMetaTexto = mesAlvo !== null ? mesesParaAnosMeses(mesAlvo) : naoAtingida;
-
-  const [testeResultados, setTesteResultados] = useState<TestRes[] | null>(null);
-  useEffect(() => {
-    setTesteResultados(rodarTestes());
-  }, []);
-
-  const [tab, setTab] = useState<"planejar" | "sensibilidade" | "dados" | "testes">("planejar");
+  const clear = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem("simulador_meta_config_v2");
+      setNotice(
+        "Plano salvo removido deste dispositivo. A simulação aberta foi mantida.",
+      );
+    } catch {
+      setNotice("Não foi possível remover o plano salvo neste navegador.");
+    }
+  };
+  const basis = (active ?? config).inflationAdjusted
+    ? "em dinheiro de hoje"
+    : "em valores futuros";
+  const currentGoal = goals.find((g) => g.id === config.goal)!;
+  const headline =
+    result && active
+      ? result.overflow || result.monthly === null
+        ? "Não foi possível calcular este cenário."
+        : active.goal === "grow"
+          ? `Você poderia juntar ${money(result.end.saldo)}.`
+          : active.goal === "monthly"
+            ? `Comece guardando ${money(result.monthly)} por mês.`
+            : result.monthTarget === 0
+              ? "Você já tem o valor da sua meta."
+              : result.monthTarget === null
+                ? `A meta não seria alcançada em ${active.years} anos.`
+                : `Você chegaria à meta em ${duration(result.monthTarget)}.`
+      : "";
+  const validResult = !!result && !result.overflow && result.monthly !== null;
 
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div style={{ fontSize: 22, fontWeight: 600 }}>Simulador de Meta Patrimonial</div>
+      <a href="#main" className="skip-link">
+        Ir para o planejamento
+      </a>
+      <header className="site-header">
+        <a
+          className="brand"
+          href="#main"
+          aria-label="Seu próximo passo — planejador"
+        >
+          <span className="brand-mark" aria-hidden="true">
+            ↗
+          </span>
+          <span>
+            seu próximo <strong>passo</strong>
+            <small>PLANEJADOR FINANCEIRO</small>
+          </span>
+        </a>
+        <span className="header-note">
+          <span className="status-dot" />
+          Sem cadastro. No seu ritmo.
+        </span>
       </header>
-
-      <div className="app-layout">
-        <Section title="Parâmetros">
-          <div className="parameter-fields">
-            <NumberField label="Montante inicial" value={montanteInicial} onChange={setMontanteInicial} prefix="R$" step={100} min={0} max={MAX_MONEY} />
-            <NumberField label="Aporte mensal (base)" value={aporteMensal} onChange={setAporteMensal} prefix="R$" step={50} min={0} max={MAX_MONEY} />
-
-            <div className="field-group">
-              <label style={{ fontSize: 13, color: "#475569" }}>Reajuste do aporte</label>
-              <select
-                className="field-select"
-                value={tipoAporte}
-                onChange={(e) => setTipoAporte(e.target.value as PoliticaAporte["tipo"])}
-                style={{ padding: 8, borderRadius: 8, border: "1px solid #e2e8f0", width: "100%" }}
-              >
-                <option value="constante">Sem reajuste (constante)</option>
-                <option value="mensal_pct">Crescimento mensal (% ao mês)</option>
-                <option value="anual_pct">Reajuste anual (% ao ano, meses 12/24/...)</option>
-                <option value="anual_inflacao">Reajuste anual pela inflação (12/24/...)</option>
-                <option value="anual_real">Reajuste anual: inflação + extra real (12/24/...)</option>
-              </select>
-            </div>
-
-            {tipoAporte === "mensal_pct" && (
-              <NumberField label="Crescimento mensal" value={mensalPct} onChange={setMensalPct} step={0.001} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,01)" />
-            )}
-            {tipoAporte === "anual_pct" && (
-              <NumberField label="Reajuste anual" value={anualPct} onChange={setAnualPct} step={0.005} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,10)" />
-            )}
-            {tipoAporte === "anual_real" && (
-              <NumberField label="Extra real anual" value={realExtra} onChange={setRealExtra} step={0.005} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,02)" />
-            )}
-
-            <NumberField label="Rentabilidade anual" value={rentabAnual} onChange={setRentabAnual} step={0.005} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,12)" />
-            <NumberField label="Meta de patrimônio" value={meta} onChange={setMeta} step={1000} min={0} max={MAX_MONEY} prefix="R$" />
-
-            <div className="field-group range-field">
-              <label style={{ fontSize: 13, color: "#475569" }}>Limite de anos para simulação: {anosLimite}</label>
-              <input aria-label="Limite de anos para simulação" type="range" min={1} max={80} step={1} value={anosLimite} onChange={(e) => setAnosLimite(safeWholeNumber(e.target.value, anosLimite, 1, 80))} />
-            </div>
-
-            <Row className="toggle-row" style={{ justifyContent: "space-between" }}>
-              <label style={{ fontSize: 13, color: "#475569" }}>Contribuição no início do mês</label>
-              <input type="checkbox" checked={contribuicaoNoInicio} onChange={(e) => setContribuicaoNoInicio(e.target.checked)} />
-            </Row>
-
-            <Row className="toggle-row" style={{ justifyContent: "space-between" }}>
-              <label
-                title="Usa (1+nominal)/(1+inflação_do_mês)-1 para cada mês"
-                style={{ fontSize: 13, color: "#475569" }}
-              >
-                Usar taxa real (ajustada pela inflação)
-              </label>
-              <input type="checkbox" checked={usarTaxaReal} onChange={(e) => setUsarTaxaReal(e.target.checked)} />
-            </Row>
-
-            <NumberField label="Inflação anual (padrão)" value={inflacaoAnual} onChange={setInflacaoAnual} step={0.005} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,04)" />
-
-            <Row className="toggle-row" style={{ justifyContent: "space-between" }}>
-              <label style={{ fontSize: 13, color: "#475569" }}>Usar tabela de inflação anual</label>
-              <input type="checkbox" checked={usaTabelaInflacao} onChange={(e) => setUsaTabelaInflacao(e.target.checked)} />
-            </Row>
-            {usaTabelaInflacao && (
-              <div className="field-group inflation-table-field">
-                <label style={{ fontSize: 13, color: "#475569" }}>Valores anuais (decimais) separados por vírgula/linha</label>
-                <textarea
-                  className="inflation-table-input"
-                  value={inflacaoTabelaStr}
-                  onChange={(e) => setInflacaoTabelaStr(e.target.value)}
-                  placeholder="Ex.: 0,04, 0,05, 0,035, 0,04"
-                  aria-label="Valores anuais de inflação"
-                  style={{ minHeight: 90, padding: 8, borderRadius: 8, border: "1px solid #e2e8f0" }}
-                />
-                <div style={{ fontSize: 12, color: "#64748b" }}>
-                  Ao acabar a lista, repete o último valor para os anos seguintes.
-                </div>
-              </div>
-            )}
-
-            <div className="action-row">
-              <button onClick={salvarConfig} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#f8fafc" }}>
-                Salvar parâmetros
-              </button>
-              <button onClick={limparConfig} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#f8fafc" }}>
-                Limpar salvos
-              </button>
-            </div>
-          </div>
-        </Section>
-
-        <div className="content-stack">
-          <Section title="Resumo da simulação">
-            <div className="summary-grid">
-              <div>
-                <div style={{ fontSize: 13, color: "#475569" }}>Tempo até alcançar a meta</div>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{mesesAteMetaTexto}</div>
-                <div style={{ fontSize: 12, color: "#64748b" }}>
-                  Limite analisado: {anosLimite} {anosLimite === 1 ? "ano" : "anos"}.
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 13, color: "#475569" }}>Saldo final no limite</div>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{fmtBRL(dados[dados.length - 1]?.saldo ?? 0)}</div>
-                <div style={{ fontSize: 12, color: "#64748b" }}>Inclui ganhos e contribuições.</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 13, color: "#475569" }}>Contribuições acumuladas</div>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{fmtBRL(dados[dados.length - 1]?.contribuicoesAcum ?? 0)}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 13, color: "#475569" }}>Ganhos acumulados</div>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{fmtBRL(dados[dados.length - 1]?.ganhosAcum ?? 0)}</div>
-              </div>
-            </div>
-            <div className="chart-container">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={dados} margin={{ left: 12, right: 24, bottom: 12 }}>
-                  <defs>
-                    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.6} />
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0.05} />
-                    </linearGradient>
-                    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.6} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.05} />
-                    </linearGradient>
-                    <linearGradient id="g3" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.6} />
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.05} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="mes" tickFormatter={(m) => `${Math.floor(m / 12)}a ${m % 12}m`} />
-                  <YAxis tickFormatter={(v) => fmtBRL(v).replace("R$\u00a0", "R$ ")} width={95} />
-                  <ChartTooltip
-                    formatter={(v: any, name: any, p: any) => {
-                      const ponto = p?.payload as any;
-                      const extra = ponto?.aporte !== undefined ? `\nAporte do mês: ${fmtBRL(ponto.aporte)}` : "";
-                      return [`${fmtBRL(v as number)}${extra}`, name];
-                    }}
-                    labelFormatter={(m: any) => `Mês ${m} (${mesesParaAnosMeses(m)})`}
-                  />
-                  <Legend />
-                  <Area type="monotone" dataKey="saldo" name="Saldo" stroke="#2563eb" fill="url(#g1)" strokeWidth={2} />
-                  <Area
-                    type="monotone"
-                    dataKey="contribuicoesAcum"
-                    name="Contribuições acumuladas"
-                    stroke="#10b981"
-                    fill="url(#g2)"
-                    strokeWidth={2}
-                  />
-                  <Area type="monotone" dataKey="ganhosAcum" name="Ganhos acumulados" stroke="#f59e0b" fill="url(#g3)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="simulation-note" style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
-              {usarTaxaReal ? (
-                <>Simulação em termos reais: inflação mensal média ≈ {fmtPct(taxaMensalInflacaoMedia)}; nominal mensal ≈ {fmtPct(taxaMensalNominalConst)}.</>
-              ) : (
-                <>Simulação em termos nominais: taxa mensal nominal ≈ {fmtPct(taxaMensalNominalConst)}.</>
-              )}
-            </div>
-          </Section>
-
-          <nav className="tab-list" aria-label="Seções da simulação">
-            {(["planejar", "sensibilidade", "dados", "testes"] as const).map((t) => (
-              <button
-                key={t}
-                className="tab-button"
-                onClick={() => setTab(t)}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #cbd5e1",
-                  background: tab === t ? "#e2e8f0" : "#f8fafc"
-                }}
-              >
-                {t}
-              </button>
-            ))}
-          </nav>
-
-          {tab === "planejar" && (
-            <Section title="Planejar por prazo">
-              <div className="planning-grid">
-                <div className="planning-field">
-                  <label style={{ fontSize: 13, color: "#475569" }}>Prazo desejado (anos)</label>
-                  <input
-                    aria-label="Prazo desejado em anos"
-                    className="range-input"
-                    type="range"
-                    min={1}
-                    max={60}
-                    step={1}
-                    value={prazoDesejado}
-                    onChange={(e) => setPrazoDesejado(safeWholeNumber(e.target.value, prazoDesejado, 1, 60))}
-                  />
-                  <div style={{ fontSize: 12, color: "#64748b" }}>
-                    {prazoDesejado} {prazoDesejado === 1 ? "ano" : "anos"}
-                  </div>
-                </div>
-                <div className="planning-result">
-                  <div style={{ fontSize: 13, color: "#475569" }}>Aporte mensal necessário (base)</div>
-                  <div style={{ fontSize: 22, fontWeight: 700 }}>{aporteParaPrazo === null ? "—" : fmtBRL(aporteParaPrazo)}</div>
-                  <div style={{ fontSize: 12, color: "#64748b" }}>
-                    Respeita a política de reajuste e a tabela de inflação (se ativa).
-                  </div>
-                </div>
-                <div className="planning-result">
-                  <div style={{ fontSize: 13, color: "#475569" }}>Taxa anual necessária</div>
-                  <div style={{ fontSize: 22, fontWeight: 700 }}>{taxaParaPrazo === null ? "—" : fmtPct(taxaParaPrazo)}</div>
-                  <div style={{ fontSize: 12, color: "#64748b" }}>Mantendo a política de aportes selecionada.</div>
-                </div>
-              </div>
-            </Section>
-          )}
-
-          {tab === "sensibilidade" && (
-            <Section title="Análise de sensibilidade (tempo até a meta)">
-              <div className="section-hint" style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
-                Linhas: variação do aporte mensal base (−20% a +20%). Colunas: variação da rentabilidade anual (−2 a +2 p.p.).
-              </div>
-              <div className="table-scroll">
-                <table className="data-table" style={{ borderCollapse: "collapse", width: "100%" }}>
-                  <thead>
-                    <tr>
-                      <th style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "left" }}>Aporte mensal base</th>
-                      {[-0.02, -0.01, 0, 0.01, 0.02].map((vr) => (
-                        <th key={vr} style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "center" }}>{((rentabAnual + vr) * 100).toFixed(2)}% a.a.</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sensibilidades.map((linha, i) => (
-                      <tr key={i}>
-                        <td style={{ border: "1px solid #e2e8f0", padding: 6 }}>{fmtBRL(aporteMensal * (1 + [-0.2, -0.1, 0, 0.1, 0.2][i]))}</td>
-                        {linha.map((cel, j) => (
-                          <td key={j} style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "center" }}>
-                            {cel.meses === null ? naoAtingida : mesesParaAnosMeses(cel.meses)}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Section>
-          )}
-
-          {tab === "dados" && (
-            <Section title="Dados e exportação">
-              <div className="action-row" style={{ marginBottom: 8 }}>
-                <button onClick={exportarCSV} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#f8fafc" }}>
-                  Exportar CSV
-                </button>
-              </div>
-              <div className="table-scroll data-table-scroll" style={{ maxHeight: 300, border: "1px solid #e2e8f0", borderRadius: 8 }}>
-                <table className="data-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead style={{ position: "sticky", top: 0, background: "#fff" }}>
-                    <tr>
-                      <th style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "left" }}>Mês</th>
-                      <th style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "left" }}>Aporte do mês</th>
-                      <th style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "left" }}>Saldo</th>
-                      <th style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "left" }}>Contribuições acumuladas</th>
-                      <th style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "left" }}>Ganhos acumulados</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dados.map((d) => (
-                      <tr key={d.mes}>
-                        <td style={{ border: "1px solid #e2e8f0", padding: 6 }}>{d.mes} ({mesesParaAnosMeses(d.mes)})</td>
-                        <td style={{ border: "1px solid #e2e8f0", padding: 6 }}>{fmtBRL(d.aporte)}</td>
-                        <td style={{ border: "1px solid #e2e8f0", padding: 6 }}>{fmtBRL(d.saldo)}</td>
-                        <td style={{ border: "1px solid #e2e8f0", padding: 6 }}>{fmtBRL(d.contribuicoesAcum)}</td>
-                        <td style={{ border: "1px solid #e2e8f0", padding: 6 }}>{fmtBRL(d.ganhosAcum)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Section>
-          )}
-
-          {tab === "testes" && (
-            <Section title="Testes automatizados (embutidos)">
-              <div className="action-row" style={{ marginBottom: 8 }}>
-                <button onClick={() => setTesteResultados(rodarTestes())} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#f8fafc" }}>
-                  Reexecutar testes
-                </button>
-              </div>
-              <div style={{ display: "grid", gap: 6 }}>
-                {(testeResultados ?? []).map((t) => (
-                  <div
-                    key={t.nome}
-                    className="test-result"
-                    style={{ background: t.passou ? "#dcfce7" : "#fee2e2" }}
-                  >
-                    <div className="test-name" style={{ fontSize: 13, fontWeight: 600 }}>{t.nome}</div>
-                    <div className="test-detail" style={{ fontSize: 12 }}>
-                      {t.passou ? "✅" : "❌"} {t.detalhe ?? ""}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
+      <main id="main">
+        <div className="intro">
+          <span className="eyebrow">UM PLANO COMEÇA COM UMA PERGUNTA</span>
+          <h1>
+            Seu futuro começa
+            <br />
+            com o que cabe <em>hoje.</em>
+          </h1>
+          <p>
+            Descubra como guardar dinheiro pode aproximar você dos seus
+            objetivos.
+            <br className="desktop-only" /> Uma pergunta de cada vez, sem
+            precisar entender de investimentos.
+          </p>
         </div>
-      </div>
+        <div className="workspace">
+          <aside className="journey">
+            <span className="eyebrow">SEU CAMINHO</span>
+            <ol>
+              {[
+                "Escolha sua pergunta",
+                "Conte seu ponto de partida",
+                "Entenda as hipóteses",
+              ].map((label, index) => (
+                <li
+                  key={label}
+                  className={
+                    step === index ? "current" : step > index ? "complete" : ""
+                  }
+                  aria-current={step === index ? "step" : undefined}
+                >
+                  <span>{step > index ? "✓" : `0${index + 1}`}</span>
+                  <div>
+                    {label}
+                    <small>
+                      {
+                        [
+                          "O que você quer descobrir?",
+                          "Os valores que fazem sentido para você",
+                          "Como vamos fazer a estimativa",
+                        ][index]
+                      }
+                    </small>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            <div className="journey-note">
+              <span className="sprout" aria-hidden="true">
+                ✳
+              </span>
+              <h3>Pequenos passos contam.</h3>
+              <p>
+                Você pode começar do zero e testar diferentes possibilidades. O
+                plano é seu.
+              </p>
+            </div>
+            <p className="privacy-note">
+              Seus valores são calculados neste navegador. Salvar o plano é
+              opcional.
+            </p>
+          </aside>
+          <div className="main-column">
+            {notice && (
+              <div className="notice" role="status">
+                {notice}
+                <button
+                  type="button"
+                  aria-label="Fechar aviso"
+                  onClick={() => setNotice("")}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {step < 3 ? (
+              <section className="panel wizard-panel">
+                <div className="panel-top">
+                  <span className="eyebrow">PASSO {step + 1} DE 3</span>
+                  <span className="step-dots" aria-hidden="true">
+                    {[0, 1, 2].map((n) => (
+                      <i key={n} className={step >= n ? "on" : ""} />
+                    ))}
+                  </span>
+                </div>
+                <h2 ref={heading} tabIndex={-1}>
+                  {
+                    [
+                      "O que você quer descobrir?",
+                      "Vamos dar forma ao seu plano.",
+                      "Uma estimativa, com tudo às claras.",
+                    ][step]
+                  }
+                </h2>
+                <p className="section-intro">
+                  {
+                    [
+                      "Escolha a pergunta que mais combina com o seu momento.",
+                      currentGoal.title,
+                      "O rendimento pode mudar. Vamos usar hipóteses para explorar possibilidades, sem prometer um resultado.",
+                    ][step]
+                  }
+                </p>
+                {step === 0 ? (
+                  <div className="goal-list">
+                    {goals.map((g) => (
+                      <button
+                        key={g.id}
+                        className="goal-card"
+                        onClick={() => {
+                          setConfig((c) => ({
+                            ...c,
+                            goal: g.id,
+                            years:
+                              g.id === "time"
+                                ? c.goal === "time"
+                                  ? c.years
+                                  : 50
+                                : c.goal === "time"
+                                  ? 10
+                                  : c.years,
+                          }));
+                          setStep(1);
+                        }}
+                      >
+                        <span className="goal-icon" aria-hidden="true">
+                          {g.icon}
+                        </span>
+                        <span>
+                          <strong>{g.title}</strong>
+                          <small>{g.description}</small>
+                        </span>
+                        <span className="arrow" aria-hidden="true">
+                          →
+                        </span>
+                      </button>
+                    ))}
+                    <p className="quiet-note">
+                      Pode explorar à vontade. Você poderá mudar de pergunta
+                      depois.
+                    </p>
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      next();
+                    }}
+                    noValidate
+                  >
+                    {step === 1 && (
+                      <div className="fields-grid">
+                        <div>
+                          {field("initial", "Quanto você já tem guardado?", {
+                            hint: "Use apenas o valor que pretende dedicar a este plano.",
+                          })}
+                          <button
+                            type="button"
+                            className="text-button zero-button"
+                            onClick={() => {
+                              update("initial", 0);
+                              setInitialReset((n) => n + 1);
+                            }}
+                          >
+                            Ainda não tenho dinheiro guardado
+                          </button>
+                        </div>
+                        {config.goal !== "monthly" &&
+                          field("monthly", "Quanto consegue guardar por mês?", {
+                            hint: "Pode ser pouco. Escolha um valor que caiba no seu mês.",
+                          })}
+                        {config.goal !== "grow" &&
+                          field("target", "Quanto você quer juntar?", {
+                            min: 0.01,
+                            hint: "Pense no valor do objetivo que quer alcançar.",
+                          })}
+                        {config.goal !== "time" &&
+                          field(
+                            "years",
+                            config.goal === "monthly"
+                              ? "Em quantos anos quer chegar lá?"
+                              : "Por quantos anos pretende guardar?",
+                            {
+                              unit: "anos",
+                              min: 1,
+                              max: 80,
+                              integer: true,
+                              hint: "Você poderá testar outro prazo depois.",
+                            },
+                          )}
+                        <div className="helper-box full-width">
+                          <span aria-hidden="true">↳</span>
+                          <p>
+                            Não precisa acertar de primeira. Use uma estimativa
+                            e ajuste o plano depois.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    {step === 2 && (
+                      <div className="assumptions">
+                        <fieldset className="choice-group">
+                          <legend>
+                            Você sabe qual rendimento quer simular?
+                          </legend>
+                          <label
+                            className={`radio-card ${config.compare ? "selected" : ""}`}
+                          >
+                            <input
+                              type="radio"
+                              name="rate-mode"
+                              checked={config.compare}
+                              onChange={() =>
+                                setConfig((c) => ({
+                                  ...c,
+                                  compare: true,
+                                  rate: 0.06,
+                                }))
+                              }
+                            />
+                            <span>
+                              <strong>Não sei — comparar cenários</strong>
+                              <small>
+                                Hipóteses ilustrativas de 4%, 6% e 8% ao ano. O
+                                resumo usa 6%.
+                              </small>
+                            </span>
+                          </label>
+                          <label
+                            className={`radio-card ${!config.compare ? "selected" : ""}`}
+                          >
+                            <input
+                              type="radio"
+                              name="rate-mode"
+                              checked={!config.compare}
+                              onChange={() => update("compare", false)}
+                            />
+                            <span>
+                              <strong>Quero informar uma taxa</strong>
+                              <small>
+                                Para experimentar uma hipótese que você já tem
+                                em mente.
+                              </small>
+                            </span>
+                          </label>
+                        </fieldset>
+                        {!config.compare && (
+                          <Field
+                            label="Rendimento estimado por ano"
+                            value={config.rate * 100}
+                            onChange={(v) => update("rate", v / 100)}
+                            unit="% ao ano"
+                            min={-99}
+                            max={1000}
+                            onError={onError}
+                            hint="Digite 6 para simular 6% ao ano. A taxa não é garantia de ganho."
+                          />
+                        )}
+                        <p className="quiet-note">
+                          Esses cenários não representam produtos, perfis de
+                          risco ou previsões de mercado. Impostos e taxas não
+                          são descontados automaticamente.
+                        </p>
+                        <details className="advanced">
+                          <summary>
+                            Ajustar hipóteses <span>Opcional</span>
+                          </summary>
+                          <div className="advanced-content">
+                            <label className="check-card">
+                              <input
+                                type="checkbox"
+                                checked={config.inflationAdjusted}
+                                onChange={(e) =>
+                                  update("inflationAdjusted", e.target.checked)
+                                }
+                              />
+                              <span>
+                                <strong>
+                                  Considerar que os preços podem aumentar
+                                </strong>
+                                <small>
+                                  Mostra tudo em dinheiro de hoje: R$ 100 mil no
+                                  futuro podem comprar menos do que hoje. A meta
+                                  passa a representar o poder de compra atual.
+                                </small>
+                              </span>
+                            </label>
+                            <Field
+                              label="Aumento estimado dos preços por ano"
+                              value={config.inflation * 100}
+                              onChange={(v) => update("inflation", v / 100)}
+                              unit="% ao ano"
+                              min={-99}
+                              max={1000}
+                              onError={onError}
+                              hint="Hipótese de inflação. Afeta o resultado ao ativar a opção acima ou reajustar depósitos pela inflação."
+                            />
+                            <div className="field">
+                              <label htmlFor="deposit-policy">
+                                Como seus depósitos mudam com o tempo?
+                              </label>
+                              <select
+                                id="deposit-policy"
+                                value={config.policy.tipo}
+                                onChange={(e) => {
+                                  const tipo = e.target
+                                    .value as PlannerConfig["policy"]["tipo"];
+                                  update(
+                                    "policy",
+                                    tipo === "mensal_pct"
+                                      ? { tipo, mensalPct: 0.01 }
+                                      : tipo === "anual_pct"
+                                        ? { tipo, anualPct: 0.05 }
+                                        : tipo === "anual_real"
+                                          ? { tipo, realExtra: 0.02 }
+                                          : { tipo },
+                                  );
+                                }}
+                              >
+                                {Object.entries(policyNames).map(
+                                  ([id, label]) => (
+                                    <option value={id} key={id}>
+                                      {label}
+                                    </option>
+                                  ),
+                                )}
+                              </select>
+                              <small>
+                                Aumentos anuais começam no depósito do mês 12 e
+                                se repetem a cada 12 meses. Os valores
+                                depositados são em reais de cada época.
+                              </small>
+                            </div>
+                            {config.policy.tipo === "mensal_pct" && (
+                              <Field
+                                label="Aumento dos depósitos por mês"
+                                value={config.policy.mensalPct * 100}
+                                onChange={(v) =>
+                                  update("policy", {
+                                    tipo: "mensal_pct",
+                                    mensalPct: v / 100,
+                                  })
+                                }
+                                unit="% ao mês"
+                                min={-99}
+                                max={100}
+                                onError={onError}
+                              />
+                            )}
+                            {config.policy.tipo === "anual_pct" && (
+                              <Field
+                                label="Aumento dos depósitos por ano"
+                                value={config.policy.anualPct * 100}
+                                onChange={(v) =>
+                                  update("policy", {
+                                    tipo: "anual_pct",
+                                    anualPct: v / 100,
+                                  })
+                                }
+                                unit="% ao ano"
+                                min={-99}
+                                max={100}
+                                onError={onError}
+                              />
+                            )}
+                            {config.policy.tipo === "anual_real" && (
+                              <Field
+                                label="Aumento extra acima da inflação"
+                                value={config.policy.realExtra * 100}
+                                onChange={(v) =>
+                                  update("policy", {
+                                    tipo: "anual_real",
+                                    realExtra: v / 100,
+                                  })
+                                }
+                                unit="% ao ano"
+                                min={-99}
+                                max={100}
+                                onError={onError}
+                              />
+                            )}
+                            <label className="check-card">
+                              <input
+                                type="checkbox"
+                                checked={config.beginning}
+                                onChange={(e) =>
+                                  update("beginning", e.target.checked)
+                                }
+                              />
+                              <span>
+                                <strong>Guardar no início de cada mês</strong>
+                                <small>
+                                  Desmarcado: consideramos o depósito no fim do
+                                  mês.
+                                </small>
+                              </span>
+                            </label>
+                            {config.goal === "time" &&
+                              field(
+                                "years",
+                                "Até quantos anos quer explorar?",
+                                {
+                                  unit: "anos",
+                                  min: 1,
+                                  max: 80,
+                                  integer: true,
+                                  hint: "Se a meta não for alcançada, mostraremos o resultado até esse limite.",
+                                },
+                              )}
+                            <label className="check-card">
+                              <input
+                                type="checkbox"
+                                checked={useTable}
+                                onChange={(e) => setUseTable(e.target.checked)}
+                              />
+                              <span>
+                                <strong>
+                                  Usar uma inflação diferente em cada ano
+                                </strong>
+                                <small>
+                                  Opcional, para simulações mais detalhadas.
+                                </small>
+                              </span>
+                            </label>
+                            {useTable && (
+                              <div className="field">
+                                <label htmlFor="inflation-table">
+                                  Inflação de cada ano, em porcentagem
+                                </label>
+                                <textarea
+                                  id="inflation-table"
+                                  value={tableText}
+                                  onChange={(e) => setTableText(e.target.value)}
+                                  placeholder="4%; 5%; 3,5%"
+                                  aria-invalid={!!tableError}
+                                  aria-describedby="table-help"
+                                />
+                                <small
+                                  id="table-help"
+                                  className={tableError ? "error" : ""}
+                                >
+                                  {tableError
+                                    ? "Informe até 80 taxas maiores que −100% e até 1.000%, separadas por ponto e vírgula."
+                                    : "Separe anos por ponto e vírgula ou uma linha por ano. A última taxa se repete nos anos seguintes."}
+                                </small>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                        <div className="hypothesis-summary">
+                          <strong>O que seu resultado vai considerar</strong>
+                          <p>
+                            {config.compare
+                              ? "Três cenários, com 6% ao ano no resumo"
+                              : `${fmtPct(config.rate)} ao ano`}
+                            .{" "}
+                            {config.inflationAdjusted
+                              ? "Valores e meta em dinheiro de hoje"
+                              : "Valores futuros, sem descontar a inflação"}
+                            . {policyNames[config.policy.tipo]}. Depósito no{" "}
+                            {config.beginning ? "início" : "fim"} do mês.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    <div className="form-actions">
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => setStep(step - 1)}
+                      >
+                        ← Voltar
+                      </button>
+                      <button type="submit" className="primary">
+                        {step === 1 ? "Continuar" : "Ver meu plano"}{" "}
+                        <span aria-hidden="true">→</span>
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </section>
+            ) : (
+              result &&
+              active &&
+              baseline &&
+              submitted && (
+                <div className="results">
+                  <section className="result-hero">
+                    <div className="panel-top">
+                      <span className="eyebrow">
+                        SEU PLANO, UMA POSSIBILIDADE
+                      </span>
+                      <span className="result-badge">{basis}</span>
+                    </div>
+                    <h2 ref={heading} tabIndex={-1}>
+                      {headline}
+                    </h2>
+                    <p>
+                      {active.goal === "grow"
+                        ? `Ao longo de ${active.years} anos, começando com ${money(active.initial)} e guardando inicialmente ${money(active.monthly)} por mês.`
+                        : active.goal === "monthly"
+                          ? `Para ter ${money(active.target)} ao final de ${active.years} anos, começando com ${money(active.initial)}.`
+                          : `Para juntar ${money(active.target)}, começando com ${money(active.initial)} e guardando inicialmente ${money(active.monthly)} por mês.`}
+                    </p>
+                    {active.inflationAdjusted && (
+                      <p>
+                        Meta e saldo em dinheiro de hoje. O depósito mensal é o
+                        valor em reais que você guardaria em cada mês.
+                      </p>
+                    )}
+                    <div className="hero-foot">
+                      <span>
+                        Hipótese de {fmtPct(active.rate)} ao ano ·{" "}
+                        {policyNames[active.policy.tipo].toLowerCase()}
+                      </span>
+                      <button
+                        className="text-button"
+                        onClick={() => {
+                          setConfig(submitted);
+                          setStep(1);
+                        }}
+                      >
+                        Editar meu plano ↗
+                      </button>
+                    </div>
+                  </section>
+                  {!validResult ? (
+                    <div className="notice" role="alert">
+                      {result.overflow
+                        ? "Os valores ultrapassam os limites numéricos da simulação. Reduza as taxas, o prazo ou os valores e tente novamente."
+                        : "Não encontramos um valor mensal dentro dos limites da simulação. Experimente uma meta menor ou um prazo diferente."}
+                      {experiment && (
+                        <button
+                          className="text-button"
+                          onClick={() => setExperiment(null)}
+                        >
+                          Voltar ao plano original
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <section className="panel evolution">
+                        <div className="section-heading">
+                          <div>
+                            <span className="eyebrow">
+                              CADA PARTE DO SEU PLANO
+                            </span>
+                            <h3>Como seu dinheiro pode crescer</h3>
+                          </div>
+                          <span className="period-label">
+                            {result.end.mes === 0
+                              ? "Hoje"
+                              : `Até ${duration(result.end.mes)}`}
+                          </span>
+                        </div>
+                        <div className="metrics">
+                          <div>
+                            <span>
+                              <i className="dot deposit" />
+                              Dinheiro que você colocou
+                            </span>
+                            <strong>
+                              {money(result.end.contribuicoesAcum)}
+                            </strong>
+                            <small>
+                              Valor inicial + depósitos
+                              {active.inflationAdjusted
+                                ? ", trazidos para dinheiro de hoje"
+                                : ""}
+                            </small>
+                          </div>
+                          <div>
+                            <span>
+                              <i className="dot earnings" />
+                              {result.end.ganhosAcum < 0
+                                ? "Perda estimada"
+                                : "Rendimento estimado"}
+                            </span>
+                            <strong>{money(result.end.ganhosAcum)}</strong>
+                            <small>
+                              {active.inflationAdjusted
+                                ? "Variação além da inflação"
+                                : "Variação além do que você colocou"}
+                            </small>
+                          </div>
+                          <div>
+                            <span>Total estimado</span>
+                            <strong>{money(result.end.saldo)}</strong>
+                            <small>Todos os valores no mesmo prazo</small>
+                          </div>
+                        </div>
+                        <div
+                          className="chart"
+                          role="img"
+                          aria-label={`Evolução até ${duration(result.end.mes)}: total ${money(result.end.saldo)}, dinheiro colocado ${money(result.end.contribuicoesAcum)} e rendimento ${money(result.end.ganhosAcum)}, ${basis}.`}
+                        >
+                          <Suspense
+                            fallback={
+                              <p className="quiet-note">
+                                Preparando o gráfico… Os valores já estão
+                                disponíveis acima.
+                              </p>
+                            }
+                          >
+                            <ProjectionChart
+                              data={result.data}
+                              target={
+                                active.goal === "grow"
+                                  ? undefined
+                                  : active.target
+                              }
+                            />
+                          </Suspense>
+                        </div>
+                        <p className="quiet-note">
+                          Uma estimativa {basis}. Rendimentos variam e podem ser
+                          negativos. Impostos e taxas não são descontados
+                          automaticamente.
+                        </p>
+                      </section>
+                      <section className="panel">
+                        <span className="eyebrow">EXPLORE SEM COMPROMISSO</span>
+                        <h3>E se eu mudar meu plano?</h3>
+                        <p className="section-intro">
+                          Veja o efeito de uma mudança por vez. Seu plano
+                          original fica preservado.
+                        </p>
+                        <div className="experiment-buttons">
+                          {submitted.goal !== "monthly" && (
+                            <button
+                              aria-pressed={experiment === "more"}
+                              onClick={() =>
+                                setExperiment(
+                                  experiment === "more" ? null : "more",
+                                )
+                              }
+                              disabled={submitted.monthly >= 1e12}
+                            >
+                              + R$ 100 por mês
+                            </button>
+                          )}
+                          <button
+                            aria-pressed={experiment === "longer"}
+                            disabled={submitted.years >= 80}
+                            onClick={() =>
+                              setExperiment(
+                                experiment === "longer" ? null : "longer",
+                              )
+                            }
+                          >
+                            {submitted.goal === "time"
+                              ? "Explorar mais 2 anos"
+                              : "Esperar mais 2 anos"}
+                          </button>
+                          <button
+                            aria-pressed={experiment === "lower"}
+                            onClick={() =>
+                              setExperiment(
+                                experiment === "lower" ? null : "lower",
+                              )
+                            }
+                          >
+                            Rendimento menor (
+                            {fmtPct(Math.max(-0.99, submitted.rate - 0.02))} ao
+                            ano)
+                          </button>
+                        </div>
+                        <div className="experiment-feedback" role="status">
+                          {!experiment
+                            ? "Escolha uma mudança para comparar com seu plano."
+                            : active.goal === "monthly"
+                              ? `O valor mensal inicial muda de ${money(baseline.monthly ?? 0)} para ${money(result.monthly ?? 0)}.`
+                              : active.goal === "time"
+                                ? `Prazo original: ${baseline.monthTarget === null ? `meta não alcançada em ${submitted.years} anos` : duration(baseline.monthTarget)}. Nesta hipótese: ${result.monthTarget === null ? `meta não alcançada em ${active.years} anos` : duration(result.monthTarget)}.`
+                                : `O total muda de ${money(baseline.end.saldo)} em ${submitted.years} anos para ${money(result.end.saldo)} em ${active.years} anos — ${money(Math.abs(result.end.saldo - baseline.end.saldo))} ${result.end.saldo >= baseline.end.saldo ? "a mais" : "a menos"}.`}
+                        </div>
+                        {experiment && (
+                          <button
+                            className="text-button"
+                            onClick={() => setExperiment(null)}
+                          >
+                            Voltar ao plano original
+                          </button>
+                        )}
+                      </section>
+                    </>
+                  )}
+                  {scenarios.length > 0 && (
+                    <section className="panel">
+                      <span className="eyebrow">O RENDIMENTO NÃO É CERTO</span>
+                      <h3>Um plano, três hipóteses</h3>
+                      <p className="section-intro">
+                        Comparação do plano original. São exemplos ilustrativos,
+                        não uma faixa garantida de resultados.
+                      </p>
+                      <div className="scenario-grid">
+                        {scenarios.map(({ rate, result: scenario }) => (
+                          <div
+                            key={rate}
+                            className={`scenario ${rate === 0.06 ? "central" : ""}`}
+                          >
+                            <span>
+                              {rate === 0.06
+                                ? "HIPÓTESE ORIGINAL"
+                                : rate < 0.06
+                                  ? "RENDIMENTO MENOR"
+                                  : "RENDIMENTO MAIOR"}
+                            </span>
+                            <h4>
+                              {fmtPct(rate)} <small>ao ano</small>
+                            </h4>
+                            <strong>
+                              {scenario.overflow || scenario.monthly === null
+                                ? "Fora dos limites"
+                                : submitted.goal === "time"
+                                  ? scenario.monthTarget === null
+                                    ? "Meta não alcançada"
+                                    : duration(scenario.monthTarget)
+                                  : money(
+                                      submitted.goal === "monthly"
+                                        ? scenario.monthly
+                                        : scenario.end.saldo,
+                                    )}
+                            </strong>
+                            <p>
+                              {submitted.goal === "monthly"
+                                ? `por mês, inicialmente, por ${submitted.years} anos`
+                                : submitted.goal === "time"
+                                  ? `para sua meta; limite de ${submitted.years} anos`
+                                  : `ao final de ${submitted.years} anos`}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="quiet-note">
+                        {submitted.inflationAdjusted
+                          ? "Resultados em dinheiro de hoje. As taxas acima são antes de descontar a inflação."
+                          : "Resultados em valores futuros, sem descontar a inflação."}
+                      </p>
+                    </section>
+                  )}
+                  <section className="panel details-panel">
+                    <details>
+                      <summary>Ver detalhes do cálculo</summary>
+                      <div className="details-body">
+                        <h3>Hipóteses desta simulação</h3>
+                        <ul>
+                          <li>
+                            Rendimento constante de {fmtPct(active.rate)} ao
+                            ano, convertido em uma taxa mensal equivalente.
+                          </li>
+                          <li>
+                            {active.inflationAdjusted
+                              ? "Saldo e cada depósito convertidos para dinheiro de hoje; a meta também é em dinheiro de hoje."
+                              : "Saldo e meta em valores futuros. A inflação não é descontada do resultado."}
+                          </li>
+                          <li>
+                            Inflação:{" "}
+                            {active.inflationTable?.length
+                              ? `${active.inflationTable.map(fmtPct).join("; ")} por ano, repetindo o último valor depois.`
+                              : `${fmtPct(active.inflation)} ao ano.`}
+                          </li>
+                          <li>
+                            {policyNames[active.policy.tipo]}.{" "}
+                            {active.policy.tipo === "mensal_pct"
+                              ? `${fmtPct(active.policy.mensalPct)} ao mês.`
+                              : active.policy.tipo === "anual_pct"
+                                ? `${fmtPct(active.policy.anualPct)} ao ano.`
+                                : active.policy.tipo === "anual_real"
+                                  ? `${fmtPct(active.policy.realExtra)} extra além da inflação.`
+                                  : ""}{" "}
+                            Aumentos anuais nos meses 12, 24 e seguintes.
+                          </li>
+                          <li>
+                            Depósito no {active.beginning ? "início" : "fim"} do
+                            mês. O valor mensal informado é em reais da época de
+                            cada depósito.
+                          </li>
+                          <li>
+                            Sem impostos, taxas de administração ou mudanças
+                            imprevisíveis do mercado.
+                          </li>
+                        </ul>
+                        {validResult && (
+                          <div
+                            className="table-scroll"
+                            tabIndex={0}
+                            role="region"
+                            aria-label="Tabela da evolução do plano"
+                          >
+                            <table>
+                              <caption>
+                                Evolução {basis} — início, anos completos e
+                                último mês
+                              </caption>
+                              <thead>
+                                <tr>
+                                  <th scope="col">Momento</th>
+                                  <th scope="col">Você colocou</th>
+                                  <th scope="col">Rendimento</th>
+                                  <th scope="col">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {result.data
+                                  .filter(
+                                    (d) =>
+                                      d.mes % 12 === 0 ||
+                                      d.mes === result.end.mes,
+                                  )
+                                  .map((d) => (
+                                    <tr key={d.mes}>
+                                      <th scope="row">{duration(d.mes)}</th>
+                                      <td>{money(d.contribuicoesAcum)}</td>
+                                      <td>{money(d.ganhosAcum)}</td>
+                                      <td>{money(d.saldo)}</td>
+                                    </tr>
+                                  ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  </section>
+                  <div className="result-actions">
+                    <button className="primary" onClick={save}>
+                      Salvar neste dispositivo <span aria-hidden="true">↓</span>
+                    </button>
+                    <button className="secondary" onClick={() => setStep(0)}>
+                      Explorar outra pergunta
+                    </button>
+                    <button className="text-button" onClick={clear}>
+                      Remover plano salvo
+                    </button>
+                  </div>
+                  <p className="quiet-note">
+                    O salvamento guarda o plano original, sem as experiências
+                    temporárias. Disponível apenas neste navegador.
+                  </p>
+                </div>
+              )
+            )}
+          </div>
+        </div>
+        <section className="learning-strip">
+          <div>
+            <span>01</span>
+            <h3>Você decide o começo.</h3>
+            <p>Não existe um valor mínimo para explorar seu plano.</p>
+          </div>
+          <div>
+            <span>02</span>
+            <h3>O tempo faz diferença.</h3>
+            <p>Compare prazos e veja como cada escolha muda a estimativa.</p>
+          </div>
+          <div>
+            <span>03</span>
+            <h3>Entenda antes de investir.</h3>
+            <p>
+              O simulador ajuda a planejar. Ele não escolhe investimentos por
+              você.
+            </p>
+          </div>
+        </section>
+      </main>
+      <footer>
+        <span>
+          seu próximo passo <span aria-hidden="true">↗</span>
+        </span>
+        <p>
+          Uma ferramenta para explorar possibilidades.
+          <br />
+          Simulações educativas, sem garantia de rendimento.
+        </p>
+        <a
+          href="https://github.com/g0dswer/Simulador-de-Investimentos"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Sobre o projeto ↗
+        </a>
+      </footer>
     </div>
   );
 }
