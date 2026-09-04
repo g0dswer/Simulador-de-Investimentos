@@ -1,4 +1,12 @@
-import { aporteNecessario, calcularProjecao, mesesParaAnosMeses, taxaNecessaria, approxEq } from "./calculos";
+import {
+  aporteNecessario,
+  anosParaMeses,
+  calcularProjecao,
+  mesesParaAnosMeses,
+  parseInflacaoTabela,
+  taxaNecessaria,
+  approxEq
+} from "./calculos";
 
 export type TestRes = { nome: string; passou: boolean; detalhe?: string };
 
@@ -7,6 +15,13 @@ export function rodarTestes(): TestRes[] {
 
   T.push({ nome: "0 meses", passou: mesesParaAnosMeses(0) === "0 meses", detalhe: mesesParaAnosMeses(0) });
   T.push({ nome: "13 meses", passou: mesesParaAnosMeses(13) === "1 ano e 1 mês", detalhe: mesesParaAnosMeses(13) });
+  const tabelaParsed = parseInflacaoTabela("0,04, 0,05, 0,035, 0,04");
+  T.push({
+    nome: "Tabela de inflação com decimal por vírgula",
+    passou: tabelaParsed.length === 4 && tabelaParsed.every((valor, index) => approxEq(valor, [0.04, 0.05, 0.035, 0.04][index])),
+    detalhe: tabelaParsed.join(", ")
+  });
+  T.push({ nome: "Anos para meses (zero)", passou: anosParaMeses(0) === 0, detalhe: String(anosParaMeses(0)) });
 
   const p1 = calcularProjecao({
     montanteInicial: 0,
@@ -41,7 +56,11 @@ export function rodarTestes(): TestRes[] {
     usarTaxaReal: false,
     inflacaoAnual: 0
   });
-  T.push({ nome: "Aporte necessário (taxa zero)", passou: approxEq(aNec, 100), detalhe: aNec.toFixed(4) });
+  T.push({
+    nome: "Aporte necessário (taxa zero)",
+    passou: aNec !== null && approxEq(aNec, 100),
+    detalhe: aNec === null ? "null" : aNec.toFixed(4)
+  });
 
   const tNec = taxaNecessaria({
     montanteInicial: 0,
@@ -169,6 +188,37 @@ export function rodarTestes(): TestRes[] {
     nome: "Taxa real com inflação=nominal (12m)",
     passou: approxEq(simVar4.dados[12].saldo, 10000, 1e-6),
     detalhe: `${simVar4.dados[12].saldo.toFixed(2)} vs 10000.00`
+  });
+
+  const tNecReal = taxaNecessaria({
+    montanteInicial: 10000,
+    aporteMensal: 0,
+    anos: 1,
+    meta: 10000,
+    contribuicaoNoInicio: false,
+    usarTaxaReal: true,
+    inflacaoAnual: 0.12
+  });
+  T.push({
+    nome: "Taxa necessária real sem dupla inflação",
+    passou: tNecReal !== null && approxEq(tNecReal, 0.12, 1e-7),
+    detalhe: tNecReal === null ? "null" : tNecReal.toFixed(8)
+  });
+
+  const pZero = calcularProjecao({
+    montanteInicial: 100,
+    aporteMensal: 50,
+    rentabAnual: 0,
+    meta: 1000,
+    anosLimite: 0,
+    contribuicaoNoInicio: true,
+    usarTaxaReal: false,
+    inflacaoAnual: 0
+  });
+  T.push({
+    nome: "Projeção de horizonte zero sem mês oculto",
+    passou: anosParaMeses(0) === 0 && pZero.dados.length === 1 && pZero.dados[0].saldo === 100,
+    detalhe: `${pZero.dados.length} ponto(s)`
   });
 
   const simVar5 = calcularProjecao({

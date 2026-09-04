@@ -21,9 +21,46 @@ import {
 } from "./lib/calculos";
 import { rodarTestes, TestRes } from "./lib/testCases";
 
-function Row({ children, style = {} as React.CSSProperties }: { children: React.ReactNode; style?: React.CSSProperties }) {
+const MIN_RATE = -0.999999;
+const MAX_RATE = 10;
+const MAX_MONEY = 1_000_000_000_000;
+const TIPOS_APORTE: readonly PoliticaAporte["tipo"][] = [
+  "constante",
+  "mensal_pct",
+  "anual_pct",
+  "anual_inflacao",
+  "anual_real"
+];
+
+function clampFinite(value: unknown, fallback: number, min: number, max: number) {
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) return fallback;
+  return Math.min(max, Math.max(min, numericValue));
+}
+
+function safeMoney(value: unknown, fallback: number) {
+  return clampFinite(value, fallback, 0, MAX_MONEY);
+}
+
+function safeRate(value: unknown, fallback: number) {
+  return clampFinite(value, fallback, MIN_RATE, MAX_RATE);
+}
+
+function safeWholeNumber(value: unknown, fallback: number, min: number, max: number) {
+  return Math.round(clampFinite(value, fallback, min, max));
+}
+
+function safeBoolean(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function isTipoAporte(value: unknown): value is PoliticaAporte["tipo"] {
+  return typeof value === "string" && TIPOS_APORTE.includes(value as PoliticaAporte["tipo"]);
+}
+
+function Row({ children, style = {} as React.CSSProperties, className }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
   return (
-    <div style={{ display: "flex", gap: 12, alignItems: "center", ...style }}>{children}</div>
+    <div className={className} style={{ display: "flex", gap: 12, alignItems: "center", ...style }}>{children}</div>
   );
 }
 
@@ -34,25 +71,37 @@ type NumberFieldProps = {
   step?: number;
   prefix?: string;
   suffix?: string;
+  min?: number;
+  max?: number;
 };
 
-function NumberField({ label, value, onChange, step = 1, prefix, suffix }: NumberFieldProps) {
+function NumberField({ label, value, onChange, step = 1, prefix, suffix, min, max }: NumberFieldProps) {
+  const inputId = `number-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const lowerBound = min ?? Number.NEGATIVE_INFINITY;
+  const upperBound = max ?? Number.POSITIVE_INFINITY;
+
   return (
-    <div style={{ display: "grid", gap: 6 }}>
-      <label style={{ fontSize: 13, color: "#475569" }}>{label}</label>
-      <Row>
-        {prefix && <span style={{ color: "#64748b" }}>{prefix}</span>}
+    <div className="number-field">
+      <label htmlFor={inputId} style={{ fontSize: 13, color: "#475569" }}>{label}</label>
+      <Row className="number-field-control">
+        {prefix && <span className="number-field-prefix" style={{ color: "#64748b" }}>{prefix}</span>}
         <input
+          id={inputId}
+          className="number-input"
           type="number"
           step={step}
+          min={min}
+          max={max}
+          inputMode="decimal"
           value={Number.isFinite(value) ? value : 0}
           onChange={(e) => {
             const next = Number(e.target.value);
-            onChange(Number.isFinite(next) ? next : 0);
+            if (!Number.isFinite(next)) return;
+            onChange(Math.min(upperBound, Math.max(lowerBound, next)));
           }}
-          style={{ padding: 8, borderRadius: 8, border: "1px solid #e2e8f0", width: 180 }}
+          style={{ padding: 8, borderRadius: 8, border: "1px solid #e2e8f0" }}
         />
-        {suffix && <span style={{ color: "#64748b" }}>{suffix}</span>}
+        {suffix && <span className="number-field-suffix" style={{ color: "#64748b" }}>{suffix}</span>}
       </Row>
     </div>
   );
@@ -60,10 +109,10 @@ function NumberField({ label, value, onChange, step = 1, prefix, suffix }: Numbe
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 16 }}>
+    <section className="section-card">
       <div style={{ fontWeight: 600, marginBottom: 8 }}>{title}</div>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -80,7 +129,10 @@ export default function App() {
 
   const [usaTabelaInflacao, setUsaTabelaInflacao] = useState(false);
   const [inflacaoTabelaStr, setInflacaoTabelaStr] = useState("");
-  const inflacaoTabela = useMemo(() => parseInflacaoTabela(inflacaoTabelaStr), [inflacaoTabelaStr]);
+  const inflacaoTabela = useMemo(
+    () => parseInflacaoTabela(inflacaoTabelaStr).filter((value) => value > MIN_RATE && value <= MAX_RATE),
+    [inflacaoTabelaStr]
+  );
 
   const [tipoAporte, setTipoAporte] = useState<PoliticaAporte["tipo"]>("constante");
   const [mensalPct, setMensalPct] = useState(0.0);
@@ -104,21 +156,21 @@ export default function App() {
     if (salvo) {
       try {
         const cfg = JSON.parse(salvo);
-        setMontanteInicial(cfg.montanteInicial ?? 10000);
-        setAporteMensal(cfg.aporteMensal ?? 1000);
-        setRentabAnual(cfg.rentabAnual ?? 0.12);
-        setMeta(cfg.meta ?? 1_000_000);
-        setAnosLimite(cfg.anosLimite ?? 50);
-        setContribuicaoNoInicio(cfg.contribuicaoNoInicio ?? true);
-        setUsarTaxaReal(cfg.usarTaxaReal ?? false);
-        setInflacaoAnual(cfg.inflacaoAnual ?? 0.04);
-        setPrazoDesejado(cfg.prazoDesejado ?? 15);
-        if (cfg.tipoAporte) setTipoAporte(cfg.tipoAporte);
-        if (cfg.mensalPct !== undefined) setMensalPct(cfg.mensalPct);
-        if (cfg.anualPct !== undefined) setAnualPct(cfg.anualPct);
-        if (cfg.realExtra !== undefined) setRealExtra(cfg.realExtra);
-        if (cfg.usaTabelaInflacao !== undefined) setUsaTabelaInflacao(cfg.usaTabelaInflacao);
-        if (cfg.inflacaoTabelaStr !== undefined) setInflacaoTabelaStr(cfg.inflacaoTabelaStr);
+        setMontanteInicial(safeMoney(cfg.montanteInicial, 10000));
+        setAporteMensal(safeMoney(cfg.aporteMensal, 1000));
+        setRentabAnual(safeRate(cfg.rentabAnual, 0.12));
+        setMeta(safeMoney(cfg.meta, 1_000_000));
+        setAnosLimite(safeWholeNumber(cfg.anosLimite, 50, 1, 80));
+        setContribuicaoNoInicio(safeBoolean(cfg.contribuicaoNoInicio, true));
+        setUsarTaxaReal(safeBoolean(cfg.usarTaxaReal, false));
+        setInflacaoAnual(safeRate(cfg.inflacaoAnual, 0.04));
+        setPrazoDesejado(safeWholeNumber(cfg.prazoDesejado, 15, 1, 60));
+        if (isTipoAporte(cfg.tipoAporte)) setTipoAporte(cfg.tipoAporte);
+        if (cfg.mensalPct !== undefined) setMensalPct(safeRate(cfg.mensalPct, 0));
+        if (cfg.anualPct !== undefined) setAnualPct(safeRate(cfg.anualPct, 0.1));
+        if (cfg.realExtra !== undefined) setRealExtra(safeRate(cfg.realExtra, 0.02));
+        setUsaTabelaInflacao(safeBoolean(cfg.usaTabelaInflacao, false));
+        if (typeof cfg.inflacaoTabelaStr === "string") setInflacaoTabelaStr(cfg.inflacaoTabelaStr);
       } catch (error) {
         console.error("Falha ao carregar configuração salva", error);
       }
@@ -298,20 +350,21 @@ export default function App() {
   const [tab, setTab] = useState<"planejar" | "sensibilidade" | "dados" | "testes">("planejar");
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16, display: "grid", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+    <div className="app-shell">
+      <header className="app-header">
         <div style={{ fontSize: 22, fontWeight: 600 }}>Simulador de Meta Patrimonial</div>
-      </div>
+      </header>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16 }}>
+      <div className="app-layout">
         <Section title="Parâmetros">
-          <div style={{ display: "grid", gap: 12 }}>
-            <NumberField label="Montante inicial" value={montanteInicial} onChange={setMontanteInicial} prefix="R$" step={100} />
-            <NumberField label="Aporte mensal (base)" value={aporteMensal} onChange={setAporteMensal} prefix="R$" step={50} />
+          <div className="parameter-fields">
+            <NumberField label="Montante inicial" value={montanteInicial} onChange={setMontanteInicial} prefix="R$" step={100} min={0} max={MAX_MONEY} />
+            <NumberField label="Aporte mensal (base)" value={aporteMensal} onChange={setAporteMensal} prefix="R$" step={50} min={0} max={MAX_MONEY} />
 
-            <div style={{ display: "grid", gap: 6 }}>
+            <div className="field-group">
               <label style={{ fontSize: 13, color: "#475569" }}>Reajuste do aporte</label>
               <select
+                className="field-select"
                 value={tipoAporte}
                 onChange={(e) => setTipoAporte(e.target.value as PoliticaAporte["tipo"])}
                 style={{ padding: 8, borderRadius: 8, border: "1px solid #e2e8f0", width: "100%" }}
@@ -325,29 +378,29 @@ export default function App() {
             </div>
 
             {tipoAporte === "mensal_pct" && (
-              <NumberField label="Crescimento mensal" value={mensalPct} onChange={setMensalPct} step={0.001} suffix="(decimal, ex.: 0,01)" />
+              <NumberField label="Crescimento mensal" value={mensalPct} onChange={setMensalPct} step={0.001} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,01)" />
             )}
             {tipoAporte === "anual_pct" && (
-              <NumberField label="Reajuste anual" value={anualPct} onChange={setAnualPct} step={0.005} suffix="(decimal, ex.: 0,10)" />
+              <NumberField label="Reajuste anual" value={anualPct} onChange={setAnualPct} step={0.005} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,10)" />
             )}
             {tipoAporte === "anual_real" && (
-              <NumberField label="Extra real anual" value={realExtra} onChange={setRealExtra} step={0.005} suffix="(decimal, ex.: 0,02)" />
+              <NumberField label="Extra real anual" value={realExtra} onChange={setRealExtra} step={0.005} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,02)" />
             )}
 
-            <NumberField label="Rentabilidade anual" value={rentabAnual} onChange={setRentabAnual} step={0.005} suffix="(decimal, ex.: 0,12)" />
-            <NumberField label="Meta de patrimônio" value={meta} onChange={setMeta} step={1000} prefix="R$" />
+            <NumberField label="Rentabilidade anual" value={rentabAnual} onChange={setRentabAnual} step={0.005} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,12)" />
+            <NumberField label="Meta de patrimônio" value={meta} onChange={setMeta} step={1000} min={0} max={MAX_MONEY} prefix="R$" />
 
-            <div style={{ display: "grid", gap: 6 }}>
+            <div className="field-group range-field">
               <label style={{ fontSize: 13, color: "#475569" }}>Limite de anos para simulação: {anosLimite}</label>
-              <input type="range" min={1} max={80} step={1} value={anosLimite} onChange={(e) => setAnosLimite(parseInt(e.target.value, 10))} />
+              <input aria-label="Limite de anos para simulação" type="range" min={1} max={80} step={1} value={anosLimite} onChange={(e) => setAnosLimite(safeWholeNumber(e.target.value, anosLimite, 1, 80))} />
             </div>
 
-            <Row style={{ justifyContent: "space-between" }}>
+            <Row className="toggle-row" style={{ justifyContent: "space-between" }}>
               <label style={{ fontSize: 13, color: "#475569" }}>Contribuição no início do mês</label>
               <input type="checkbox" checked={contribuicaoNoInicio} onChange={(e) => setContribuicaoNoInicio(e.target.checked)} />
             </Row>
 
-            <Row style={{ justifyContent: "space-between" }}>
+            <Row className="toggle-row" style={{ justifyContent: "space-between" }}>
               <label
                 title="Usa (1+nominal)/(1+inflação_do_mês)-1 para cada mês"
                 style={{ fontSize: 13, color: "#475569" }}
@@ -357,19 +410,21 @@ export default function App() {
               <input type="checkbox" checked={usarTaxaReal} onChange={(e) => setUsarTaxaReal(e.target.checked)} />
             </Row>
 
-            <NumberField label="Inflação anual (padrão)" value={inflacaoAnual} onChange={setInflacaoAnual} step={0.005} suffix="(decimal, ex.: 0,04)" />
+            <NumberField label="Inflação anual (padrão)" value={inflacaoAnual} onChange={setInflacaoAnual} step={0.005} min={MIN_RATE} max={MAX_RATE} suffix="(decimal, ex.: 0,04)" />
 
-            <Row style={{ justifyContent: "space-between" }}>
+            <Row className="toggle-row" style={{ justifyContent: "space-between" }}>
               <label style={{ fontSize: 13, color: "#475569" }}>Usar tabela de inflação anual</label>
               <input type="checkbox" checked={usaTabelaInflacao} onChange={(e) => setUsaTabelaInflacao(e.target.checked)} />
             </Row>
             {usaTabelaInflacao && (
-              <div style={{ display: "grid", gap: 6 }}>
+              <div className="field-group inflation-table-field">
                 <label style={{ fontSize: 13, color: "#475569" }}>Valores anuais (decimais) separados por vírgula/linha</label>
                 <textarea
+                  className="inflation-table-input"
                   value={inflacaoTabelaStr}
                   onChange={(e) => setInflacaoTabelaStr(e.target.value)}
                   placeholder="Ex.: 0,04, 0,05, 0,035, 0,04"
+                  aria-label="Valores anuais de inflação"
                   style={{ minHeight: 90, padding: 8, borderRadius: 8, border: "1px solid #e2e8f0" }}
                 />
                 <div style={{ fontSize: 12, color: "#64748b" }}>
@@ -378,7 +433,7 @@ export default function App() {
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="action-row">
               <button onClick={salvarConfig} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#f8fafc" }}>
                 Salvar parâmetros
               </button>
@@ -389,9 +444,9 @@ export default function App() {
           </div>
         </Section>
 
-        <div style={{ display: "grid", gap: 16 }}>
+        <div className="content-stack">
           <Section title="Resumo da simulação">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+            <div className="summary-grid">
               <div>
                 <div style={{ fontSize: 13, color: "#475569" }}>Tempo até alcançar a meta</div>
                 <div style={{ fontSize: 24, fontWeight: 700 }}>{mesesAteMetaTexto}</div>
@@ -413,7 +468,7 @@ export default function App() {
                 <div style={{ fontSize: 24, fontWeight: 700 }}>{fmtBRL(dados[dados.length - 1]?.ganhosAcum ?? 0)}</div>
               </div>
             </div>
-            <div style={{ height: 320 }}>
+            <div className="chart-container">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={dados} margin={{ left: 12, right: 24, bottom: 12 }}>
                   <defs>
@@ -455,7 +510,7 @@ export default function App() {
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
+            <div className="simulation-note" style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
               {usarTaxaReal ? (
                 <>Simulação em termos reais: inflação mensal média ≈ {fmtPct(taxaMensalInflacaoMedia)}; nominal mensal ≈ {fmtPct(taxaMensalNominalConst)}.</>
               ) : (
@@ -464,10 +519,11 @@ export default function App() {
             </div>
           </Section>
 
-          <div style={{ display: "flex", gap: 8 }}>
+          <nav className="tab-list" aria-label="Seções da simulação">
             {(["planejar", "sensibilidade", "dados", "testes"] as const).map((t) => (
               <button
                 key={t}
+                className="tab-button"
                 onClick={() => setTab(t)}
                 style={{
                   padding: "8px 12px",
@@ -479,34 +535,35 @@ export default function App() {
                 {t}
               </button>
             ))}
-          </div>
+          </nav>
 
           {tab === "planejar" && (
             <Section title="Planejar por prazo">
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                <div>
+              <div className="planning-grid">
+                <div className="planning-field">
                   <label style={{ fontSize: 13, color: "#475569" }}>Prazo desejado (anos)</label>
                   <input
+                    aria-label="Prazo desejado em anos"
+                    className="range-input"
                     type="range"
                     min={1}
                     max={60}
                     step={1}
                     value={prazoDesejado}
-                    onChange={(e) => setPrazoDesejado(parseInt(e.target.value, 10))}
-                    style={{ width: "100%" }}
+                    onChange={(e) => setPrazoDesejado(safeWholeNumber(e.target.value, prazoDesejado, 1, 60))}
                   />
                   <div style={{ fontSize: 12, color: "#64748b" }}>
                     {prazoDesejado} {prazoDesejado === 1 ? "ano" : "anos"}
                   </div>
                 </div>
-                <div>
+                <div className="planning-result">
                   <div style={{ fontSize: 13, color: "#475569" }}>Aporte mensal necessário (base)</div>
-                  <div style={{ fontSize: 22, fontWeight: 700 }}>{fmtBRL(aporteParaPrazo)}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700 }}>{aporteParaPrazo === null ? "—" : fmtBRL(aporteParaPrazo)}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>
                     Respeita a política de reajuste e a tabela de inflação (se ativa).
                   </div>
                 </div>
-                <div>
+                <div className="planning-result">
                   <div style={{ fontSize: 13, color: "#475569" }}>Taxa anual necessária</div>
                   <div style={{ fontSize: 22, fontWeight: 700 }}>{taxaParaPrazo === null ? "—" : fmtPct(taxaParaPrazo)}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>Mantendo a política de aportes selecionada.</div>
@@ -517,11 +574,11 @@ export default function App() {
 
           {tab === "sensibilidade" && (
             <Section title="Análise de sensibilidade (tempo até a meta)">
-              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+              <div className="section-hint" style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
                 Linhas: variação do aporte mensal base (−20% a +20%). Colunas: variação da rentabilidade anual (−2 a +2 p.p.).
               </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <div className="table-scroll">
+                <table className="data-table" style={{ borderCollapse: "collapse", width: "100%" }}>
                   <thead>
                     <tr>
                       <th style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "left" }}>Aporte mensal base</th>
@@ -549,13 +606,13 @@ export default function App() {
 
           {tab === "dados" && (
             <Section title="Dados e exportação">
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <div className="action-row" style={{ marginBottom: 8 }}>
                 <button onClick={exportarCSV} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#f8fafc" }}>
                   Exportar CSV
                 </button>
               </div>
-              <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid #e2e8f0", borderRadius: 8 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <div className="table-scroll data-table-scroll" style={{ maxHeight: 300, border: "1px solid #e2e8f0", borderRadius: 8 }}>
+                <table className="data-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead style={{ position: "sticky", top: 0, background: "#fff" }}>
                     <tr>
                       <th style={{ border: "1px solid #e2e8f0", padding: 6, textAlign: "left" }}>Mês</th>
@@ -583,7 +640,7 @@ export default function App() {
 
           {tab === "testes" && (
             <Section title="Testes automatizados (embutidos)">
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <div className="action-row" style={{ marginBottom: 8 }}>
                 <button onClick={() => setTesteResultados(rodarTestes())} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#f8fafc" }}>
                   Reexecutar testes
                 </button>
@@ -592,18 +649,11 @@ export default function App() {
                 {(testeResultados ?? []).map((t) => (
                   <div
                     key={t.nome}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 8,
-                      padding: "6px 10px",
-                      background: t.passou ? "#dcfce7" : "#fee2e2"
-                    }}
+                    className="test-result"
+                    style={{ background: t.passou ? "#dcfce7" : "#fee2e2" }}
                   >
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{t.nome}</div>
-                    <div style={{ fontSize: 12 }}>
+                    <div className="test-name" style={{ fontSize: 13, fontWeight: 600 }}>{t.nome}</div>
+                    <div className="test-detail" style={{ fontSize: 12 }}>
                       {t.passou ? "✅" : "❌"} {t.detalhe ?? ""}
                     </div>
                   </div>

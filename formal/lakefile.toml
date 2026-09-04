@@ -1,0 +1,6 @@
+name = "simulador-investimentos-formal"
+version = "0.1.0"
+defaultTargets = ["Investment"]
+
+[[lean_lib]]
+name = "Investment"

@@ -2,9 +2,34 @@
 
 Aplicação React para planejar aportes mensais e metas patrimoniais.
 
-## Scripts
+## Desenvolvimento local
 
-- `npm run dev`: ambiente de desenvolvimento.
-- `npm run build`: build de produção.
-- `npm run preview`: pré-visualização do build.
-- `npm run test`: executa testes unitários (Vitest).
+Requer Node.js 22.12 ou superior.
+
+```sh
+npm ci
+npm test
+npm run build
+npm run dev
+```
+
+## Especificação Lean
+
+O núcleo formal fica em `formal/` e usa a versão registrada em
+`formal/lean-toolchain`:
+
+```sh
+cd formal
+lake build
+```
+
+Lean prova as identidades exatas documentadas em `formal/README.md`. Os testes
+em `tests/formal-contract.test.ts` verificam que o caminho TypeScript segue os
+mesmos contratos em casos numéricos controlados.
+
+## GitHub Pages
+
+O workflow `.github/workflows/deploy.yml` testa TypeScript, gera o build Vite,
+compila a especificação Lean e só então publica `dist/` no GitHub Pages. O
+`base` do Vite é derivado automaticamente de `GITHUB_REPOSITORY`, mantendo os
+assets sob `/Simulador-de-Investimentos/` no deploy.
