@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { approxEq, calcularProjecao } from "../src/lib/calculos";
+import {
+  aporteNecessario,
+  approxEq,
+  calcularProjecao,
+  taxaNecessaria
+} from "../src/lib/calculos";
 
 /**
  * Executable bridge to formal/Investment.lean.
@@ -98,5 +103,75 @@ describe("contrato executável da especificação Lean", () => {
         ).toBe(true);
       }
     }
+  });
+
+  it("mantém o bracket do aporte: o limite superior atinge e um valor menor falha", () => {
+    const target = 2_400;
+    const months = 23;
+    const required = aporteNecessario({
+      montanteInicial: 0,
+      rentabAnual: 0,
+      anos: months / 12,
+      meta: target,
+      contribuicaoNoInicio: false,
+      usarTaxaReal: false,
+      inflacaoAnual: 0
+    });
+    expect(required).not.toBeNull();
+
+    const finalBalance = (contribution: number) => calcularProjecao({
+      montanteInicial: 0,
+      aporteMensal: contribution,
+      rentabAnual: 0,
+      meta: target,
+      anosLimite: months / 12,
+      contribuicaoNoInicio: false,
+      usarTaxaReal: false,
+      inflacaoAnual: 0
+    }).dados.at(-1)!.saldo;
+
+    expect(finalBalance(required as number)).toBeGreaterThanOrEqual(target);
+    expect(finalBalance((required as number) - 1e-8)).toBeLessThan(target);
+  });
+
+  it("mantém o bracket da taxa e devolve o limite superior que atinge a meta", () => {
+    const target = 11_000;
+    const required = taxaNecessaria({
+      montanteInicial: 10_000,
+      aporteMensal: 0,
+      anos: 1,
+      meta: target,
+      contribuicaoNoInicio: false,
+      usarTaxaReal: false,
+      inflacaoAnual: 0
+    });
+    expect(required).not.toBeNull();
+
+    const finalBalance = (annualRate: number) => calcularProjecao({
+      montanteInicial: 10_000,
+      aporteMensal: 0,
+      rentabAnual: annualRate,
+      meta: target,
+      anosLimite: 1,
+      contribuicaoNoInicio: false,
+      usarTaxaReal: false,
+      inflacaoAnual: 0
+    }).dados.at(-1)!.saldo;
+
+    expect(required as number).toBeCloseTo(0.1, 10);
+    expect(finalBalance(required as number)).toBeGreaterThanOrEqual(target);
+    expect(finalBalance((required as number) - 1e-8)).toBeLessThan(target);
+  });
+
+  it("retorna falha explícita quando nenhuma taxa pode formar bracket", () => {
+    expect(taxaNecessaria({
+      montanteInicial: 0,
+      aporteMensal: 0,
+      anos: 10,
+      meta: 1,
+      contribuicaoNoInicio: false,
+      usarTaxaReal: false,
+      inflacaoAnual: 0
+    })).toBeNull();
   });
 });

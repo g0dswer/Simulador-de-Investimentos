@@ -100,12 +100,17 @@ fórmula do TypeScript for adulterada.
 - Etapa 0: contratos de domínio, parsing e falha explícita implementados no
   TypeScript e cobertos por regressões.
 - Etapa 1: modelo racional em `formal/Investment.lean` compilando sem `sorry`.
-- Etapa 2: identidades de passo, taxa real zero, ordem do aporte,
-  monotonicidade no aporte e forma fechada sem juros provadas; preservação de
-  não negatividade da recorrência e anuidade geométrica geral ficam pendentes.
+- Etapa 2: concluída para a recorrência de parâmetros mensais constantes:
+  identidades de passo, taxa real zero, ordem do aporte, não negatividade,
+  monotonicidade e formas fechadas gerais estão provadas.
 - Etapa 3: ponte executável adicionada, incluindo 500 cenários determinísticos
   contra a fórmula fechada nominal.
-- Etapa 4: solvers corrigidos e testados no TypeScript; sua prova formal ainda
-  é trabalho futuro.
+- Etapa 4: o núcleo exato está formalizado em `formal/Solvers.lean`: os
+  predicados financeiros são monotônicos no domínio, a preparação distingue
+  meta já atingida/bracket/ausência de bracket, cada bisseção preserva o
+  invariante, a largura é reduzida pela metade e o limite superior final
+  satisfaz a meta dentro da tolerância declarada. A tradução linha a linha de
+  tabelas variáveis de inflação e políticas variáveis de aporte permanece
+  como extensão futura.
 - Etapa 5: `npm test`, build Vite e `lake build` agora bloqueiam o deploy do
   GitHub Pages em caso de falha.

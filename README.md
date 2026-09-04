@@ -23,9 +23,10 @@ cd formal
 lake build
 ```
 
-Lean prova as identidades exatas documentadas em `formal/README.md`. Os testes
-em `tests/formal-contract.test.ts` verificam que o caminho TypeScript segue os
-mesmos contratos em casos numéricos controlados.
+Lean prova as identidades, recorrências e invariantes de bisseção documentados
+em `formal/README.md`. Os testes em `tests/formal-contract.test.ts` verificam
+que o caminho TypeScript segue os mesmos contratos em casos numéricos
+controlados e nas pós-condições dos solvers.
 
 ## GitHub Pages
 
