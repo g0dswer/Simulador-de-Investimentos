@@ -29,9 +29,14 @@ const go = (goal = /Quanto posso juntar\?/) => {
   render(<App />);
   click(goal);
 };
+const viewSummary = () => {
+  click(/Ver meu plano/);
+  const summary = screen.queryByRole("button", { name: "Resumo guiado" });
+  if (summary) fireEvent.click(summary);
+};
 const result = () => {
   click("Continuar");
-  click(/Ver meu plano/);
+  viewSummary();
 };
 
 describe("Planejamento guiado", () => {
@@ -51,7 +56,7 @@ describe("Planejamento guiado", () => {
     click("Continuar");
     fireEvent.click(screen.getByLabelText(/Quero informar uma taxa/));
     fill("Rendimento estimado por ano", "0%");
-    click(/Ver meu plano/);
+    viewSummary();
     expect(
       screen.getByRole("heading", {
         name: /Você poderia juntar R\$\s*1\.000,50/,
@@ -86,7 +91,7 @@ describe("Planejamento guiado", () => {
     click("Continuar");
     fireEvent.click(screen.getByLabelText(/Quero informar uma taxa/));
     fill("Rendimento estimado por ano", "6%");
-    click(/Ver meu plano/);
+    viewSummary();
     expect(
       screen.getByRole("heading", {
         name: /Você poderia juntar R\$\s*1\.060,00/,
@@ -103,7 +108,7 @@ describe("Planejamento guiado", () => {
     click("Continuar");
     fireEvent.click(screen.getByLabelText(/Quero informar uma taxa/));
     fill("Rendimento estimado por ano", "0");
-    click(/Ver meu plano/);
+    viewSummary();
     expect(
       screen.getByRole("heading", {
         name: /Comece guardando R\$\s*100,00 por mês/,
@@ -160,14 +165,14 @@ describe("Planejamento guiado", () => {
       screen.getByLabelText(/Usar uma inflação diferente em cada ano/),
     );
     fill("Inflação de cada ano, em porcentagem", "abc");
-    click(/Ver meu plano/);
+    viewSummary();
     expect(
       screen.getByRole("heading", {
         name: "Uma estimativa, com tudo às claras.",
       }),
     ).toBeTruthy();
     fill("Inflação de cada ano, em porcentagem", "4%; 3,5%");
-    click(/Ver meu plano/);
+    viewSummary();
     expect(screen.getByText("em dinheiro de hoje")).toBeTruthy();
     click(/Salvar neste dispositivo/);
     expect(

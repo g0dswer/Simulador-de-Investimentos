@@ -10,6 +10,52 @@
   --line: #dfe5db;
   --cream: #f7f8f2;
 }
+
+.result-view-nav {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+  align-items: center;
+}
+.result-view-nav .text-button {
+  margin-left: auto;
+}
+.dashboard-page .workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+.dashboard-page .journey {
+  display: none;
+}
+.dashboard-page .intro {
+  display: none;
+}
+.dashboard-page .result-view-nav {
+  margin-top: 24px;
+}
+.dashboard-page .intro h1 {
+  font-size: 30px;
+  letter-spacing: -1px;
+  margin: 12px 0;
+}
+.dashboard-page .intro h1 br {
+  display: none;
+}
+.dashboard-page .intro h1 br::after {
+  content: " ";
+}
+.dashboard-page .intro p,
+.dashboard-page .learning-strip {
+  display: none;
+}
+@media (max-width: 700px) {
+  .result-view-nav {
+    gap: 8px;
+  }
+  .result-view-nav .text-button {
+    margin-left: 0;
+  }
+}
 * {
   box-sizing: border-box;
 }

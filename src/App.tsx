@@ -23,8 +23,10 @@ import {
 } from "./lib/planner";
 
 const STORAGE_KEY = "simulador_plano_v3";
+import type { DashboardSession } from "./AdvancedDashboard";
 const money = (value: number) => fmtBRL(value);
 const ProjectionChart = lazy(() => import("./ProjectionChart"));
+const AdvancedDashboard = lazy(() => import("./AdvancedDashboard"));
 const duration = (months: number) =>
   months === 0
     ? "agora"
@@ -206,6 +208,10 @@ export default function App() {
   const [loaded] = useState(readSaved);
   const [config, setConfig] = useState<PlannerConfig>(loaded.config);
   const [step, setStep] = useState(0);
+  const dashboardSession = useRef<DashboardSession>({});
+  const [resultView, setResultView] = useState<"dashboard" | "summary">(
+    "dashboard",
+  );
   const [initialReset, setInitialReset] = useState(0);
   const [notice, setNotice] = useState(loaded.notice);
   const [submitted, setSubmitted] = useState<PlannerConfig | null>(null);
@@ -259,7 +265,9 @@ export default function App() {
       };
       setConfig(ready);
       setSubmitted(ready);
+      dashboardSession.current = {};
       setExperiment(null);
+      setResultView("dashboard");
       setStep(3);
     } else setStep(step + 1);
   };
@@ -350,7 +358,9 @@ export default function App() {
   const validResult = !!result && !result.overflow && result.monthly !== null;
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${step === 3 && resultView === "dashboard" ? "dashboard-page" : ""}`}
+    >
       <a href="#main" className="skip-link">
         Ir para o planejamento
       </a>
@@ -388,6 +398,27 @@ export default function App() {
             precisar entender de investimentos.
           </p>
         </div>
+        {step === 3 && (
+          <nav className="result-view-nav" aria-label="Visualização do plano">
+            <button
+              className={resultView === "dashboard" ? "primary" : "secondary"}
+              aria-pressed={resultView === "dashboard"}
+              onClick={() => setResultView("dashboard")}
+            >
+              Dashboard completo
+            </button>
+            <button
+              className={resultView === "summary" ? "primary" : "secondary"}
+              aria-pressed={resultView === "summary"}
+              onClick={() => setResultView("summary")}
+            >
+              Resumo guiado
+            </button>
+            <button className="text-button" onClick={() => setStep(1)}>
+              Voltar às perguntas
+            </button>
+          </nav>
+        )}
         <div className="workspace">
           <aside className="journey">
             <span className="eyebrow">SEU CAMINHO</span>
@@ -854,6 +885,28 @@ export default function App() {
                   </form>
                 )}
               </section>
+            ) : resultView === "dashboard" && submitted ? (
+              <Suspense
+                fallback={
+                  <section className="panel" role="status">
+                    Abrindo seu dashboard completo…
+                  </section>
+                }
+              >
+                <AdvancedDashboard
+                  initialConfig={submitted}
+                  session={dashboardSession.current}
+                  onChange={(updated) => {
+                    setSubmitted(updated);
+                    setConfig(updated);
+                    setExperiment(null);
+                    setUseTable(!!updated.inflationTable?.length);
+                    setTableText(
+                      updated.inflationTable?.map(fmtPct).join("; ") ?? "",
+                    );
+                  }}
+                />
+              </Suspense>
             ) : (
               result &&
               active &&

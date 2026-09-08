@@ -6,6 +6,13 @@ publicado no GitHub Pages, sem cadastro ou backend.
 
 ## Experiência guiada
 
+Ao clicar em **Ver meu plano**, o guia abre o dashboard da versão anterior
+(`0a35958`) já preenchido com os valores escolhidos. Foram recuperados os
+controles, a disposição e as abas **planejar**, **sensibilidade**, **dados** e
+**testes**, incluindo a matriz 5×5 e a exportação CSV. O resumo guiado continua
+disponível no seletor de visualização. Alterações do dashboard acompanham a
+troca de visualização e o retorno às perguntas.
+
 - Três etapas: pergunta, valores e hipóteses; voltar preserva as informações.
 - Valores brasileiros (`1.000,50`) e taxas em porcentagem (`6` ou `6%`).
 - Cenários ilustrativos de 4%, 6% e 8% ao ano, ou taxa personalizada.

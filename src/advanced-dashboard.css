@@ -1,0 +1,279 @@
+/* Restored from 0a35958:src/styles.css, isolated from the guided interface. */
+.legacy-app-shell {
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+}
+.legacy-app-shell input[type="checkbox"] {
+  width: auto;
+  height: auto;
+  accent-color: auto;
+}
+.legacy-app-shell input,
+.legacy-app-shell button,
+.legacy-app-shell select,
+.legacy-app-shell textarea {
+  font-family: inherit;
+  color: #0f172a;
+}
+.legacy-app-header:focus {
+  outline: none;
+}
+.legacy-app-shell {
+  width: 100%;
+  max-width: 1100px;
+  min-width: 0;
+  margin: 0 auto;
+  padding: clamp(12px, 3vw, 16px);
+  display: grid;
+  gap: 16px;
+}
+
+.legacy-app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.legacy-app-header > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.legacy-app-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  align-items: start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.legacy-content-stack,
+.legacy-parameter-fields,
+.legacy-field-group,
+.legacy-number-field {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.legacy-field-group,
+.legacy-number-field {
+  gap: 6px;
+}
+
+.legacy-section-card {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.legacy-number-field-control {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.legacy-number-field-prefix {
+  flex: 0 0 auto;
+}
+
+.legacy-number-input {
+  flex: 1 1 180px;
+  width: 180px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.legacy-number-field-suffix {
+  flex: 1 1 100px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.legacy-field-select,
+.legacy-inflation-table-input,
+.legacy-range-input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.legacy-toggle-row {
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.legacy-toggle-row > label {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.legacy-toggle-row > input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 2px 0 0 auto;
+}
+
+.legacy-range-field > input[type="range"],
+.legacy-range-input {
+  display: block;
+}
+
+.legacy-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.legacy-action-row > button {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.legacy-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.legacy-summary-grid > div,
+.legacy-planning-grid > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.legacy-chart-container {
+  width: 100%;
+  height: 320px;
+  min-width: 0;
+}
+
+.legacy-chart-container .recharts-responsive-container {
+  min-width: 0 !important;
+}
+
+.legacy-simulation-note,
+.legacy-section-hint {
+  overflow-wrap: anywhere;
+}
+
+.legacy-tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.legacy-tab-button {
+  flex: 1 1 auto;
+  min-width: max-content;
+}
+
+.legacy-planning-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.legacy-planning-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.legacy-planning-result {
+  min-width: 0;
+}
+
+.legacy-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.legacy-table-scroll .legacy-data-table {
+  min-width: 640px;
+}
+
+.legacy-test-result {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.legacy-test-name {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.legacy-test-detail {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .legacy-app-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .legacy-planning-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .legacy-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .legacy-section-card {
+    padding: 12px;
+  }
+
+  .legacy-chart-container {
+    height: 260px;
+  }
+
+  .legacy-tab-button {
+    flex: 1 1 calc(50% - 8px);
+  }
+}
+
+@media (max-width: 420px) {
+  .legacy-app-shell {
+    gap: 12px;
+  }
+
+  .legacy-number-input {
+    flex-basis: 150px;
+  }
+
+  .legacy-number-field-suffix {
+    flex-basis: 100%;
+  }
+
+  .legacy-test-result {
+    flex-direction: column;
+  }
+}
