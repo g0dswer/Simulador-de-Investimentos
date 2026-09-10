@@ -27,6 +27,7 @@ import type { DashboardSession } from "./AdvancedDashboard";
 const money = (value: number) => fmtBRL(value);
 const ProjectionChart = lazy(() => import("./ProjectionChart"));
 const AdvancedDashboard = lazy(() => import("./AdvancedDashboard"));
+const RetirementDashboard = lazy(() => import("./RetirementDashboard"));
 const duration = (months: number) =>
   months === 0
     ? "agora"
@@ -209,9 +210,10 @@ export default function App() {
   const [config, setConfig] = useState<PlannerConfig>(loaded.config);
   const [step, setStep] = useState(0);
   const dashboardSession = useRef<DashboardSession>({});
-  const [resultView, setResultView] = useState<"dashboard" | "summary">(
-    "dashboard",
-  );
+  const [retirementOpened, setRetirementOpened] = useState(false);
+  const [resultView, setResultView] = useState<
+    "dashboard" | "summary" | "retirement"
+  >("dashboard");
   const [initialReset, setInitialReset] = useState(0);
   const [notice, setNotice] = useState(loaded.notice);
   const [submitted, setSubmitted] = useState<PlannerConfig | null>(null);
@@ -359,7 +361,7 @@ export default function App() {
 
   return (
     <div
-      className={`app-shell ${step === 3 && resultView === "dashboard" ? "dashboard-page" : ""}`}
+      className={`app-shell ${step === 3 && resultView !== "summary" ? "dashboard-page" : ""}`}
     >
       <a href="#main" className="skip-link">
         Ir para o planejamento
@@ -406,6 +408,16 @@ export default function App() {
               onClick={() => setResultView("dashboard")}
             >
               Dashboard completo
+            </button>
+            <button
+              className={resultView === "retirement" ? "primary" : "secondary"}
+              aria-pressed={resultView === "retirement"}
+              onClick={() => {
+                setRetirementOpened(true);
+                setResultView("retirement");
+              }}
+            >
+              Aposentadoria
             </button>
             <button
               className={resultView === "summary" ? "primary" : "secondary"}
@@ -885,7 +897,8 @@ export default function App() {
                   </form>
                 )}
               </section>
-            ) : resultView === "dashboard" && submitted ? (
+            ) : resultView === "retirement" ? null : resultView ===
+                "dashboard" && submitted ? (
               <Suspense
                 fallback={
                   <section className="panel" role="status">
@@ -1272,6 +1285,19 @@ export default function App() {
             )}
           </div>
         </div>
+        {step === 3 && retirementOpened && submitted && (
+          <div hidden={resultView !== "retirement"}>
+            <Suspense
+              fallback={
+                <section className="panel" role="status">
+                  Abrindo planejamento da aposentadoria…
+                </section>
+              }
+            >
+              <RetirementDashboard initialConfig={submitted} />
+            </Suspense>
+          </div>
+        )}
         <section className="learning-strip">
           <div>
             <span>01</span>

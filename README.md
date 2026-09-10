@@ -69,6 +69,17 @@ e os fluxos de interface são verificados adicionalmente pelos testes
 
 ## GitHub Pages
 
+### Planejamento da aposentadoria
+
+Após concluir o guia, a opção **Aposentadoria** abre a área de patrimônio,
+capacidade de poupança, fases de acumulação e retiradas, estratégias de consumo
+ou preservação da reserva, cenários e relatórios. O dashboard original e o
+resumo guiado continuam disponíveis. Os cenários são salvos apenas neste
+navegador. Veja o [mapa de funcionalidades e limites](docs/retirement-features.md).
+
+O novo módulo é verificado por testes numéricos e de interface; as provas Lean
+existentes não foram ampliadas para cobrir as estratégias de aposentadoria.
+
 O workflow `.github/workflows/deploy.yml` testa TypeScript, gera o build Vite,
 compila a especificação Lean e só então publica `dist/` no GitHub Pages. O
 `base` do Vite é derivado automaticamente de `GITHUB_REPOSITORY`, mantendo os
